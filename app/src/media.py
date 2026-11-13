@@ -1,3 +1,4 @@
+import importlib
 import inspect
 import logging
 import threading
@@ -10,6 +11,7 @@ import numpy as np
 from fastapi import HTTPException
 
 log = logging.getLogger("face-context")
+LIP_MIN = 0.35
 
 AUDIO_EXT = {".wav", ".mp3", ".m4a", ".mp4", ".webm", ".ogg", ".oga", ".aac", ".flac", ".caf"}
 AUDIO_TYPES = {"audio/wav": ".wav", "audio/x-wav": ".wav", "audio/wave": ".wav", "audio/mpeg": ".mp3",
@@ -67,12 +69,38 @@ def image_to_jpeg(data, side=256):
     return cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 88])[1].tobytes()
 
 
-def call_process(process, path, name, known, hotwords):
+def lip_gate(lip, pid=None):
+    if lip is None:
+        return None
+    if not (0.0 <= lip <= 1.0):
+        raise HTTPException(400, "lip must be a number between 0 and 1")
+    if lip < LIP_MIN:
+        log.info("audio chunk dropped: lip activity %.2f below %.2f (person %s)", lip, LIP_MIN, pid)
+        return "lips"
+    return None
+
+
+def call_process(process, path, name, known, hotwords, lip=None):
     try:
-        takes_hot = "hotwords" in inspect.signature(process).parameters
+        params = inspect.signature(process).parameters
     except (TypeError, ValueError):
-        takes_hot = False
-    return process(path, name, known, **({"hotwords": hotwords} if takes_hot else {}))
+        params = {}
+    any_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+    kw = {}
+    if "hotwords" in params or any_kw:
+        kw["hotwords"] = hotwords
+    if lip is not None and ("lip" in params or any_kw):
+        kw["lip"] = lip
+    return process(path, name, known, **kw)
+
+
+def warm_up_notes():
+    try:
+        warm = getattr(importlib.import_module("notes"), "warm_up", None)
+        if callable(warm):
+            warm()
+    except Exception as exc:
+        log.warning("notes warm-up skipped: %s", type(exc).__name__)
 
 
 class AudioQueue:

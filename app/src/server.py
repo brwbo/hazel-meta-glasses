@@ -23,7 +23,8 @@ from starlette.concurrency import run_in_threadpool
 SRC = Path(__file__).resolve().parent
 ROOT = SRC.parent
 sys.path.insert(0, str(SRC))
-from media import AudioQueue, audio_suffix, call_process, first_upload, image_to_jpeg, read_body  # noqa: E402
+from media import (AudioQueue, audio_suffix, call_process, first_upload, image_to_jpeg, lip_gate,  # noqa: E402
+                   read_body, warm_up_notes)
 from sources import CameraSource, IngestSource, RoomConsent  # noqa: E402
 from store import ConsentRequired, Store  # noqa: E402
 
@@ -240,7 +241,7 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
             loop.call_soon_threadsafe(hub.broadcast, msg)
 
     def process_chunk(job):
-        pid, suffix, data = job
+        pid, suffix, data, lip = job
         person = store.get_person(pid)
         if person is None:
             return
@@ -250,7 +251,7 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
         try:
             known = [text for _, text in store.notes(pid)]
             hot = [p["name"] for p in store.list_people() if p["nameSource"] != "placeholder"]
-            result = call_process(notes_mod.process_audio, tmp.name, person["name"], known, hot)
+            result = call_process(notes_mod.process_audio, tmp.name, person["name"], known, hot, lip)
         finally:
             Path(tmp.name).unlink(missing_ok=True)
         if not isinstance(result, dict) or not store.exists(pid):
@@ -272,25 +273,27 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
 
     audio = app.state.audio = AudioQueue(process_chunk, maxlen=2)
 
-    def queue_audio(pid, suffix, data):
+    def queue_audio(pid, suffix, data, lip=None):
+        if reason := lip_gate(lip, pid):
+            return JSONResponse({"queued": False, "reason": reason, "personId": pid}, 202)
         try:
             importlib.import_module("notes").process_audio
         except Exception:
             raise HTTPException(503, "notes pipeline unavailable: src/notes.py is missing or failed to import")
-        dropped = audio.submit((pid, suffix, data))
+        dropped = audio.submit((pid, suffix, data, lip))
         return JSONResponse({"queued": True, "personId": pid, "dropped": dropped}, 202)
 
     @app.post("/api/people/{pid}/conversation")
-    async def conversation(request: Request, pid: int = PersonId):
+    async def conversation(request: Request, pid: int = PersonId, lip: float | None = None):
         person_or_404(pid)
         filename, ctype, data = await first_upload(request, MAX_AUDIO)
         suffix = audio_suffix(filename, ctype)
         if suffix is None or not data:
             raise HTTPException(400, "upload an audio file (wav, mp3, m4a, webm, ogg, aac, flac)")
-        return queue_audio(pid, suffix, data)
+        return queue_audio(pid, suffix, data, lip)
 
     @app.post("/api/ingest/audio")
-    async def ingest_audio(request: Request, personId: int | None = None):
+    async def ingest_audio(request: Request, personId: int | None = None, lip: float | None = None):
         if personId is not None and not 1 <= personId < 2**31:
             raise HTTPException(400, "invalid personId")
         ctype = request.headers.get("content-type", "")
@@ -307,7 +310,7 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
                 return JSONResponse({"stored": False, "detail": "no enrolled person in view; audio discarded"}, 202)
             personId = max(faces, key=lambda f: f["box"][2] * f["box"][3])["personId"]
         person_or_404(personId)
-        return queue_audio(personId, suffix, data)
+        return queue_audio(personId, suffix, data, lip)
 
     @app.patch("/api/people/{pid}")
     def patch_person(body: PersonPatch, pid: int = PersonId):
@@ -411,15 +414,6 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
         def root():
             return PlainTextResponse("face-context API is running; web/ is not built yet")
     return app
-
-
-def warm_up_notes():
-    try:
-        warm = getattr(importlib.import_module("notes"), "warm_up", None)
-        if callable(warm):
-            warm()
-    except Exception as exc:
-        log.warning("notes warm-up skipped: %s", type(exc).__name__)
 
 
 def lan_ip():

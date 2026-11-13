@@ -40,10 +40,17 @@ export class Overlay {
         tr = this.create(id, f.box);
         this.tracks.set(id, tr);
       }
-      tr.prev = tr.last;
+      const gap = t - tr.lastT;
+      tr.prev = gap > 700 ? null : tr.last;
       tr.prevT = tr.lastT;
       tr.last = f.box.slice();
       tr.lastT = t;
+      const span = tr.prev ? (tr.lastT - tr.prevT) / 1000 : 0;
+      if (tr.prev && span >= 0.04) {
+        const cap = Math.max(40, tr.last[2] * 4);
+        const v = tr.last.map((val, i) => Math.max(-cap, Math.min(cap, (val - tr.prev[i]) / span)));
+        tr.vel = tr.vel ? tr.vel.map((old, i) => old * 0.5 + v[i] * 0.5) : v;
+      } else if (!tr.prev) tr.vel = null;
       tr.face = f;
       tr.goneAt = null;
       tr.missingAt = null;
@@ -141,10 +148,9 @@ export class Overlay {
         continue;
       }
       let target = tr.last;
-      if (!snap && tr.prev && tr.lastT > tr.prevT && !tr.goneAt && !tr.missingAt) {
-        const span = (tr.lastT - tr.prevT) / 1000;
-        const ahead = Math.min(t - tr.lastT, GRACE_MS) / 1000;
-        target = tr.last.map((v, i) => v + ((v - tr.prev[i]) / span) * ahead);
+      if (!snap && tr.vel && !tr.goneAt) {
+        const ahead = Math.min(t - tr.lastT, tr.missingAt ? 300 : GRACE_MS) / 1000;
+        target = tr.last.map((v, i) => v + tr.vel[i] * ahead);
       }
       tr.cur = snap ? target.slice() : tr.cur.map((v, i) => v + (target[i] - v) * k);
       const [x, y, w, hh] = tr.cur;
@@ -156,6 +162,7 @@ export class Overlay {
       tr.el.style.width = `${pw + pad * 2}px`;
       tr.el.style.height = `${ph + pad * 2}px`;
       tr.el.style.setProperty("--pad", `${pad}px`);
+      tr.el.style.zIndex = String(Math.max(1, 2000 - Math.round(pw)));
       tr.rect = { x: px, y: py, w: pw, h: ph };
       tr.hist.push({ t, x: px - pad, y: py - pad, w: pw + pad * 2, h: ph + pad * 2 });
       while (tr.hist.length && t - tr.hist[0].t > GRACE_MS) tr.hist.shift();

@@ -1,14 +1,20 @@
-import { h, api } from "./util.js";
-import { Overlay, Leader } from "./overlay.js";
-import { renderPerson, renderLoading, renderPending } from "./card.js";
-import { setupSession } from "./session.js";
-import { startMic } from "./mic.js";
-import { cropFace } from "./crop.js";
+import { h, api } from "../util.js";
+import { setupSession } from "../session.js";
+import { startMic } from "../mic.js";
+import { cropFace } from "../crop.js";
+import { setupControls } from "../controls.js";
+import { Lips } from "../lips.js";
+import { CreamOverlay } from "./overlay.js";
+import { renderPerson, renderLoading, renderPending, hear } from "./card.js";
+import { createWorld } from "./gl/world.js";
+import { createFlakes } from "./gl/flakes.js";
+import { createBrackets } from "./gl/brackets.js";
+import { createCardRig } from "./gl/card-rig.js";
 
 const params = new URLSearchParams(location.search);
 let mock = null;
 if (params.get("mock") === "1") {
-  mock = (await import("./mock.js")).installMock({ lost: params.has("lost"), empty: params.has("empty"), room: params.has("room"), faces: Number(params.get("faces")) || 0 });
+  mock = (await import("../mock.js")).installMock({ lost: params.has("lost"), empty: params.has("empty"), room: params.has("room"), faces: Number(params.get("faces")) || 0, mouth: params.get("mouth"), talk: params.get("talk") });
 }
 
 const $ = (id) => document.getElementById(id);
@@ -23,8 +29,13 @@ let mic = null;
 
 const state = { clear: new Map(), bustThumb: false, names: new Map(), manual: new Set(), noFacesSince: 0, people: [], sel: null, conn: "connecting", lastDetAt: 0, faces: 0, ws: null, retry: 0, retryAt: 0, retryTimer: null, cardCtx: null };
 
-const overlay = new Overlay({ stage, layer: $("faces"), onPick: pick, onMiss: () => state.sel && clearSel() });
-const leader = new Leader($("leader"));
+const overlay = new CreamOverlay({ stage, layer: $("faces"), onPick: pick, onMiss: () => state.sel && clearSel() });
+await Promise.all(["600 15px 'Hanken Grotesk'", "400 16px 'Hanken Grotesk'", "400 28px 'Young Serif'", "500 26px Caveat"].map((f) => document.fonts.load(f).catch(() => null)));
+const world = createWorld({ canvas: $("gl"), layer: $("css3d") });
+const flakes = createFlakes(world.scene);
+const brackets = createBrackets({ world, overlay, flakes });
+const rig = createCardRig({ world, flakes, wrapper: $("card3d"), card });
+window.__cream = { world, flakes };
 const session = setupSession({
   indicator: $("session-dot"),
   slot: $("session-pop"),
@@ -69,7 +80,7 @@ function renderStageMsg() {
     stageMsg.hidden = false;
   } else if (state.conn === "live" && state.faces === 0 && state.noFacesSince && performance.now() - state.noFacesSince > 2000) {
     if (stageMsg.dataset.kind !== "empty") {
-      stageMsg.replaceChildren(h("p", { class: "msg-empty", text: "No faces in view" }));
+      stageMsg.replaceChildren(h("div", { class: "msg-empty" }, h("h2", { text: "No one in view" }), h("p", { text: "Look towards someone and their card is one tap away." })));
       stageMsg.dataset.kind = "empty";
     }
     stageMsg.hidden = false;
@@ -139,10 +150,20 @@ function reconcile() {
   if (!s) return;
   if (s.trackId != null && overlay.has(s.trackId)) {
     const f = overlay.face(s.trackId);
-    if (f.personId !== s.personId) {
-      s.personId = f.personId;
-      showCard(true);
-    }
+    const now = performance.now();
+    if (f.personId != null && f.personId !== s.personId) {
+      if (s.personId == null) {
+        s.personId = f.personId;
+        s.swap = null;
+        showCard(true);
+      } else if (!s.swap || s.swap.id !== f.personId) {
+        s.swap = { id: f.personId, since: now };
+      } else if (now - s.swap.since > 1500) {
+        s.personId = f.personId;
+        s.swap = null;
+        showCard(true);
+      }
+    } else s.swap = null;
     if (s.lostAt) reattach();
     return;
   }
@@ -169,7 +190,6 @@ function reattach() {
     s.faded = false;
     showCard();
   }
-  leader.draw();
 }
 
 function pick(trackId) {
@@ -178,47 +198,26 @@ function pick(trackId) {
   overlay.cursor = trackId;
   const s = state.sel;
   if (s && s.trackId === trackId && !s.faded && !s.lostAt) return;
+  rig.dissolve();
   state.sel = { trackId, personId: f.personId, lostAt: null, faded: false, pendingAt: performance.now(), slow: false };
   overlay.selected = trackId;
+  state.replay = true;
   showCard();
-  leader.draw();
 }
 
-let hideTimer = null;
 function openCard() {
-  clearTimeout(hideTimer);
-  card.style.transform = "";
-  card.classList.remove("is-faded");
-  if (card.hidden) {
-    card.hidden = false;
-    card.getBoundingClientRect();
-  }
-  if (!card.classList.contains("is-open")) glitch();
-  card.classList.add("is-open");
-  document.body.classList.add("has-card");
-}
-
-function glitch() {
-  card.classList.remove("is-glitch");
-  card.getBoundingClientRect();
-  card.classList.add("is-glitch");
-  setTimeout(() => card.classList.remove("is-glitch"), 400);
+  rig.open({ replay: state.replay });
+  state.replay = false;
 }
 
 function closeCard() {
-  card.classList.remove("is-open");
-  document.body.classList.remove("has-card");
-  clearTimeout(hideTimer);
-  hideTimer = setTimeout(() => {
-    if (!card.classList.contains("is-open")) card.hidden = true;
-  }, 320);
+  rig.close();
 }
 
 function clearSel() {
   state.sel = null;
   state.cardCtx = null;
   overlay.selected = null;
-  leader.hide();
   closeCard();
 }
 
@@ -248,12 +247,8 @@ async function showCard(quiet) {
     if (!ctx || ctx.personId !== id) {
       ctx = {
         personId: id,
-        tab: "data",
         tracking: true,
-        refresh: (tab) => {
-          if (tab) state.cardCtx.tab = tab;
-          showCard(true);
-        },
+        refresh: () => showCard(true),
         renamed: () => {
           state.manual.add(id);
           loadPeople();
@@ -340,7 +335,7 @@ function updateCardStatus(force) {
   if (!force && now - statusTick < 300) return;
   statusTick = now;
   const inView = s.trackId != null && !s.lostAt && overlay.has(s.trackId);
-  ctx.setStatus(inView ? "Target in view" : "Target lost", inView);
+  ctx.setStatus(inView ? "In view" : "Out of view", inView);
 }
 
 async function loadPeople() {
@@ -354,8 +349,17 @@ async function loadPeople() {
 }
 
 let captionTimer = null;
+let heardTimer = null;
 function onTranscript(m) {
   if (!m.text) return;
+  const ctx = state.cardCtx;
+  if (ctx && m.personId != null && m.personId === ctx.personId && card.classList.contains("is-open")) {
+    hear(ctx, m.text);
+    clearTimeout(heardTimer);
+    heardTimer = setTimeout(() => {
+      if (state.cardCtx === ctx && !ctx.editing && !card.contains(document.activeElement)) showCard(true);
+    }, 3000);
+  }
   const person = state.people.find((p) => p.id === m.personId);
   const parts = [h("span", { class: "caption-text", text: m.text })];
   if (person) parts.unshift(h("span", { class: "caption-who", text: person.name }));
@@ -365,73 +369,7 @@ function onTranscript(m) {
   captionTimer = setTimeout(() => caption.classList.remove("is-on"), 4500);
 }
 
-function isTyping(el) {
-  return el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
-}
-
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
-    if (!isTyping(e.target)) clearSel();
-    return;
-  }
-  if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
-  const keys = state.cardCtx && card.classList.contains("is-open") ? state.cardCtx.keys : null;
-  if (keys) {
-    const k = e.key.toLowerCase();
-    if (k === "1" || k === "2" || k === "3") {
-      e.preventDefault();
-      return keys.tab(["data", "notes", "model"][Number(k) - 1]);
-    }
-    if (k === "r") {
-      e.preventDefault();
-      return keys.rename();
-    }
-    if (k === "e") {
-      e.preventDefault();
-      return keys.edit();
-    }
-    if (k === "x") {
-      e.preventDefault();
-      return keys.del();
-    }
-  }
-  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-    const list = overlay.ordered();
-    if (!list.length) return;
-    e.preventDefault();
-    let i = list.findIndex((t) => t.id === overlay.cursor);
-    if (i < 0) i = e.key === "ArrowRight" ? -1 : list.length;
-    i = (i + (e.key === "ArrowRight" ? 1 : -1) + list.length) % list.length;
-    overlay.cursor = list[i].id;
-    overlay.focus(list[i].id);
-  } else if (e.key === "Enter" && e.target.tagName !== "BUTTON" && overlay.cursor != null) {
-    e.preventDefault();
-    pick(overlay.cursor);
-  }
-});
-
-const grip = $("grip");
-let drag = null;
-grip.addEventListener("pointerdown", (e) => {
-  drag = { y: e.clientY, dy: 0 };
-  grip.setPointerCapture(e.pointerId);
-  card.classList.add("is-dragging");
-});
-grip.addEventListener("pointermove", (e) => {
-  if (!drag) return;
-  drag.dy = Math.max(0, e.clientY - drag.y);
-  card.style.transform = `translateY(${drag.dy}px)`;
-});
-const endDrag = () => {
-  if (!drag) return;
-  card.classList.remove("is-dragging");
-  const far = drag.dy > 90;
-  drag = null;
-  card.style.transform = "";
-  if (far) clearSel();
-};
-grip.addEventListener("pointerup", endDrag);
-grip.addEventListener("pointercancel", endDrag);
+const controls = setupControls({ overlay, card, grip: $("grip"), getKeys: () => (state.cardCtx && card.classList.contains("is-open") ? state.cardCtx.keys : null), pick, clearSel });
 
 let last = performance.now();
 let lastSec = 0;
@@ -456,25 +394,13 @@ function frame(now) {
   }
   const tracking = !state.cardCtx || state.cardCtx.tracking !== false;
   overlay.targeting = tracking;
-  const anchor = cardBody.querySelector("[data-anchor]");
-  let ar = anchor && anchor.offsetParent ? anchor.getBoundingClientRect() : null;
-  const head = s && s.trackId != null ? overlay.clientRect(s.trackId) : null;
-  const cr = card.getBoundingClientRect();
-  if (ar && phone.matches) ar = { left: ar.left, width: ar.width, top: cr.top + 4, height: 1, right: ar.right };
-  if (head && !phone.matches && card.classList.contains("is-open")) {
-    const cx = head.x + head.w / 2;
-    const right = card.classList.contains("dock-right");
-    if (cx > cr.left - 24 && cx < cr.right + 24) {
-      card.classList.toggle("dock-right", !right);
-      document.body.classList.toggle("dock-right", !right);
-    }
-  }
-  const covered = head && (phone.matches ? head.y + head.h > cr.top - 8 : head.x + head.w / 2 > cr.left && head.x + head.w / 2 < cr.right);
-  if (s && !s.faded && !s.lostAt && head && ar && ar.height && !drag && tracking && !covered && card.classList.contains("is-open")) {
-    leader.update(head, ar, phone.matches, card.classList.contains("dock-right"));
-  } else {
-    leader.hide();
-  }
+  const head = s && s.trackId != null && !s.lostAt ? overlay.clientRect(s.trackId) : null;
+  world.setPhone(phone.matches);
+  world.frame(dt, now);
+  brackets.update(dt, now);
+  rig.update(dt, now, { head, isPhone: phone.matches, dragging: controls.dragging() });
+  flakes.update(now);
+  world.render(dt);
   updateCardStatus(false);
   updateLiveThumb(now);
   if (state.conn === "live" && now - state.lastDetAt > 3000) {
@@ -491,7 +417,11 @@ function frame(now) {
 
 loadPeople();
 session.refresh();
-if (!params.has("nomic")) mic = startMic($("mic"));
+if (!params.has("nomic")) {
+  const lips = new Lips({ overlay, source: mock ? mock.video : feed, measure: mock ? mock.mouth : null });
+  mic = startMic($("mic"), { lips });
+  window.__lips = params.has("debug") ? lips : undefined;
+}
 setInterval(loadPeople, 15000);
 connect();
 requestAnimationFrame(frame);

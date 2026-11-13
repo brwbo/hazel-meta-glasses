@@ -87,3 +87,49 @@ def test_room_text_defaults():
 
 def test_lan_ip_is_string():
     assert isinstance(server.lan_ip(), str)
+
+
+def test_lip_gate():
+    import media
+    assert media.lip_gate(None) is None and media.lip_gate(0.9) is None
+    assert media.lip_gate(media.LIP_MIN - 0.01) == "lips"
+    for bad in (-0.1, 1.5, float("nan")):
+        with pytest.raises(Exception):
+            media.lip_gate(bad)
+
+
+def test_call_process_passes_lip_only_when_supported():
+    assert call_process(lambda p, n, k, hotwords=None: hotwords, "f", "S", [], ["S"], 0.8) == ["S"]
+    assert call_process(lambda p, n, k, lip=None: lip, "f", "S", [], [], 0.8) == 0.8
+    assert call_process(lambda p, n, k, **kw: kw, "f", "S", [], ["S"], 0.8) == {"hotwords": ["S"], "lip": 0.8}
+    assert call_process(lambda p, n, k, **kw: kw, "f", "S", [], [], None) == {"hotwords": []}
+
+
+def test_low_lip_chunks_dropped_before_transcription(tmp_path, monkeypatch):
+    import types
+    from fastapi.testclient import TestClient
+    from sources import IngestSource
+    from store import Store
+    calls = []
+
+    def process_audio(path, name, known, hotwords=None, lip=None):
+        calls.append(lip)
+        return {"transcript": "hello", "summary": "", "tags": [], "followups": []}
+
+    monkeypatch.setitem(sys.modules, "notes", types.SimpleNamespace(process_audio=process_audio))
+    store = Store(":memory:")
+    pid = store.enrol("Sam", np.ones(128, np.float32), "yes")
+    app = server.create_app(store, IngestSource(store), tmp_path, web_dir=tmp_path / "noweb")
+    wav = {"content": b"RIFFdata", "headers": {"content-type": "audio/wav"}}
+    with TestClient(app) as client:
+        r = client.post(f"/api/ingest/audio?personId={pid}&lip=0.1", **wav)
+        assert r.status_code == 202 and r.json() == {"queued": False, "reason": "lips", "personId": pid}
+        r = client.post(f"/api/people/{pid}/conversation?lip=0.2", files={"file": ("a.wav", b"RIFF", "audio/wav")})
+        assert r.json()["reason"] == "lips"
+        assert client.post(f"/api/ingest/audio?personId={pid}&lip=2", **wav).status_code == 400
+        assert client.post(f"/api/ingest/audio?personId={pid}&lip=abc", **wav).status_code == 400
+        assert client.post(f"/api/ingest/audio?personId={pid}&lip=0.8", **wav).json()["queued"] is True
+        assert client.post(f"/api/ingest/audio?personId={pid}", **wav).json()["queued"] is True
+        assert app.state.audio.join(5)
+    assert calls == [0.8, None]
+    assert [t for _, t in store.notes(pid)] == ["hello", "hello"]

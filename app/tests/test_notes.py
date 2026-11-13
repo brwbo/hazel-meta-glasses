@@ -229,11 +229,43 @@ def test_stt_model_selection(monkeypatch):
     assert notes.stt_model_name().endswith("whisper-large-v3-turbo")
 
 
-def test_silence_gate():
+def test_gate_silence_and_lip():
     import numpy as np
+    import notes_audio as na
 
-    assert notes._is_silent(np.zeros(16000, dtype=np.float32))
-    assert not notes._is_silent((0.2 * np.sin(np.arange(16000) / 5)).astype(np.float32))
+    assert na.gate(np.zeros(32000, dtype=np.float32)) is None
+    assert na.gate(np.ones(32000, dtype=np.float32) * 0.2, lip=0.05) is None
+
+
+def test_gate_rejects_music_like():
+    import numpy as np
+    import notes_audio as na
+
+    tt = np.arange(5 * 16000) / 16000
+    music = np.zeros_like(tt)
+    for i, f in enumerate([220, 277, 330, 440]):
+        env = np.sin(np.pi * ((tt * 2 + i * 0.25) % 1)) ** 2
+        for h in (1, 2, 3, 4):
+            music += env * np.sin(2 * np.pi * f * h * tt) / h
+    music = (0.3 * music / np.abs(music).max()).astype(np.float32)
+    assert na.gate(music) is None
+
+
+def test_music_score_and_segment_filter():
+    import notes_audio as na
+
+    assert na.music_score({"tone": 0.3, "beat": 0.1, "band": 0.5}) >= 1.0
+    assert na.music_score({"tone": 0.0, "beat": 0.1, "band": 0.5}) == 0.0
+    assert not notes._segment_ok(0.9, -0.2, False)
+    assert not notes._segment_ok(0.1, -1.5, False)
+    assert notes._segment_ok(0.1, -0.4, False)
+
+
+def test_process_audio_passes_lip(monkeypatch):
+    seen = []
+    monkeypatch.setattr(notes, "transcribe", lambda p, **kw: seen.append(kw) or [{"start": 0, "end": 1, "text": "Hello."}])
+    notes.process_audio("x", "Sam", [], lip=0.7)
+    assert seen[0]["lip"] == 0.7
 
 
 class FakeWhisper:

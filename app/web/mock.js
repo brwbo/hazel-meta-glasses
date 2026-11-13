@@ -77,6 +77,13 @@ function pose(tr, t) {
   return { cx, cy, s };
 }
 
+function mouthOf(trackId, t, params) {
+  const talkers = String(params.talk || "11").split(",").map(Number);
+  const talking = params.mouth !== "still" && talkers.includes(trackId) && t % 5 < 3;
+  if (!talking) return 0.015 + 0.0008 * Math.sin(t * 3 + trackId);
+  return 0.02 + 0.05 * Math.max(0, Math.sin(t * Math.PI * 2 * 3.5)) * (0.6 + 0.4 * Math.sin(t * 1.7));
+}
+
 function draw(g, t, params) {
   g.fillStyle = "#070a10";
   g.fillRect(0, 0, W, H);
@@ -110,7 +117,7 @@ function draw(g, t, params) {
     return;
   }
   if (params.empty) return;
-  const ps = (params.faces ? tracks.slice(0, params.faces) : tracks).map((tr) => pose(tr, t)).sort((a, b) => a.s - b.s);
+  const ps = (params.faces ? tracks.slice(0, params.faces) : tracks).map((tr) => ({ ...pose(tr, t), mouth: mouthOf(tr.trackId, t, params) })).sort((a, b) => a.s - b.s);
   for (const p of ps) {
     const shade = g.createLinearGradient(0, p.cy - p.s, 0, p.cy + p.s * 1.6);
     shade.addColorStop(0, "#3a4458");
@@ -122,6 +129,10 @@ function draw(g, t, params) {
     g.fillRect(p.cx - p.s * 0.16, p.cy + p.s * 0.4, p.s * 0.32, p.s * 0.5);
     g.beginPath();
     g.ellipse(p.cx, p.cy, p.s * 0.4, p.s * 0.52, 0, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = "#0b0f18";
+    g.beginPath();
+    g.ellipse(p.cx, p.cy + p.s * 0.28, p.s * 0.12, Math.max(1, p.mouth * p.s * 1.04 * 0.5), 0, 0, Math.PI * 2);
     g.fill();
   }
 }
@@ -352,5 +363,5 @@ export function installMock(params) {
     requestAnimationFrame(loop);
   };
   loop();
-  return { video: canvas };
+  return { video: canvas, mouth: (trackId) => mouthOf(trackId, now() - 0.12, params) };
 }

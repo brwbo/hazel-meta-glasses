@@ -66,7 +66,6 @@ MLX_ALIASES = {
     "turbo": "mlx-community/whisper-large-v3-turbo",
     "turbo-q4": "mlx-community/whisper-large-v3-turbo-q4",
 }
-SILENCE_RMS = 0.01
 _models = {}
 _PCORES = None
 
@@ -131,6 +130,16 @@ def _warm_mlx():
 def warm_up():
     def run():
         try:
+            import numpy as np
+
+            try:
+                from notes_audio import speech_probs
+            except ImportError:
+                from .notes_audio import speech_probs
+            speech_probs(np.zeros(8192, dtype=np.float32))
+        except Exception:
+            pass
+        try:
             _get_model()
         except Exception:
             pass
@@ -138,17 +147,6 @@ def warm_up():
     t = threading.Thread(target=run, name="stt-warmup", daemon=True)
     t.start()
     return t
-
-
-def _is_silent(audio):
-    import numpy as np
-
-    n = len(audio) // 320
-    if n == 0:
-        return True
-    frames = audio[: n * 320].reshape(n, 320)
-    rms = np.sqrt((frames.astype(np.float32) ** 2).mean(axis=1))
-    return float((rms > SILENCE_RMS).mean()) < 0.03
 
 
 def _hints(hotwords, person_name):
@@ -163,14 +161,16 @@ def _hints(hotwords, person_name):
     return "Conversation in English or Finnish. Names: " + ", ".join(names) + ".", " ".join(names)
 
 
-def _run_transcribe(model, audio, hotwords=None, person_name=None):
+def _segment_ok(no_speech, avg_logprob, lenient):
+    return no_speech < (0.6 if lenient else 0.5) and avg_logprob > (-1.3 if lenient else -1.0)
+
+
+def _run_transcribe(model, audio, hotwords=None, person_name=None, lenient=False):
     prompt, hot = _hints(hotwords, person_name)
     lang = os.environ.get("NOTES_STT_LANG", "").strip() or None
     if lang is None and stt_model_name().endswith(".en"):
         lang = "en"
     if stt_backend() == "mlx" and isinstance(model, str):
-        if audio is None or _is_silent(audio):
-            return []
         import mlx_whisper
 
         r = mlx_whisper.transcribe(
@@ -180,13 +180,16 @@ def _run_transcribe(model, audio, hotwords=None, person_name=None):
             condition_on_previous_text=False,
             initial_prompt=prompt,
             word_timestamps=False,
-            no_speech_threshold=0.6,
+            no_speech_threshold=0.6 if lenient else 0.5,
+            logprob_threshold=-1.0 if lenient else -0.8,
+            compression_ratio_threshold=2.4 if lenient else 2.2,
+            temperature=0.0,
             verbose=None,
         )
         return [
             {"start": float(s["start"]), "end": float(s["end"]), "text": s["text"].strip()}
             for s in r.get("segments", [])
-            if s["text"].strip() and s.get("no_speech_prob", 0) < 0.8
+            if s["text"].strip() and _segment_ok(s.get("no_speech_prob", 0.0), s.get("avg_logprob", 0.0), lenient)
         ]
     segments, _ = model.transcribe(
         audio,
@@ -197,11 +200,15 @@ def _run_transcribe(model, audio, hotwords=None, person_name=None):
         condition_on_previous_text=False,
         initial_prompt=prompt,
         hotwords=hot,
+        no_speech_threshold=0.6 if lenient else 0.5,
+        log_prob_threshold=-1.0 if lenient else -0.8,
+        compression_ratio_threshold=2.4 if lenient else 2.2,
+        temperature=0.0,
     )
     return [
         {"start": float(s.start), "end": float(s.end), "text": s.text.strip()}
         for s in segments
-        if s.text.strip()
+        if s.text.strip() and _segment_ok(getattr(s, "no_speech_prob", 0.0), getattr(s, "avg_logprob", 0.0), lenient)
     ]
 
 
@@ -245,14 +252,20 @@ def _decode(path):
         return _decode_ffmpeg(path)
 
 
-def transcribe(path, hotwords=None, person_name=None):
+def transcribe(path, hotwords=None, person_name=None, lip=None):
     path = str(path)
     if not os.path.isfile(path):
         raise FileNotFoundError("audio file not found")
-    audio = _decode(path)
+    try:
+        from notes_audio import gate
+    except ImportError:
+        from .notes_audio import gate
+    audio = gate(_decode(path), lip)
+    if audio is None:
+        return []
     model = _get_model()
     with _run_lock:
-        return _run_transcribe(model, audio, hotwords, person_name)
+        return _run_transcribe(model, audio, hotwords, person_name, lenient=lip is not None and lip >= 0.5)
 
 
 def _sentences(text):
@@ -433,8 +446,10 @@ def summarise(person_name, transcript, known_notes):
     return fallback_summarise(person_name, transcript, known_notes)
 
 
-def process_audio(path, person_name, known_notes, hotwords=None):
-    if hotwords or person_name:
+def process_audio(path, person_name, known_notes, hotwords=None, lip=None):
+    if lip is not None:
+        segments = transcribe(path, hotwords=hotwords, person_name=person_name, lip=lip)
+    elif hotwords or person_name:
         segments = transcribe(path, hotwords=hotwords, person_name=person_name)
     else:
         segments = transcribe(path)

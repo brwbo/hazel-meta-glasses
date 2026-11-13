@@ -1,4 +1,4 @@
-import { h, icon, api } from "./util.js";
+import { h, icon, api } from "../util.js";
 
 const micro = (text) => h("p", { class: "micro", text });
 
@@ -169,9 +169,9 @@ export function editData(p, ctx, { thumb, consent, done, onToggle }) {
   return [
     thumb,
     photoEditor(p, ctx, thumb),
-    field(p, ctx, "name", "Identity", { required: true, max: 80 }),
+    field(p, ctx, "name", "Name", { required: true, max: 80 }),
     field(p, ctx, "role", "Role"),
-    field(p, ctx, "summary", "Scan results", { multiline: true, max: 2000 }),
+    field(p, ctx, "summary", "Summary", { multiline: true, max: 2000 }),
     listEditor(p, "tags", "Tags"),
     listEditor(p, "followups", "Follow-ups", { checkable: true, done, onToggle }),
     consent,
