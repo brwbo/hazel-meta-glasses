@@ -133,3 +133,53 @@ def test_low_lip_chunks_dropped_before_transcription(tmp_path, monkeypatch):
         assert app.state.audio.join(5)
     assert calls == [0.8, None]
     assert [t for _, t in store.notes(pid)] == ["hello", "hello"]
+
+
+def test_speech_status_and_banner(monkeypatch):
+    import types
+    import media
+    monkeypatch.setitem(sys.modules, "notes", types.SimpleNamespace(engine=lambda: "gemini"))
+    assert media.speech_status() == {"stt": "gemini", "cloudSpeech": True}
+    assert "sent to Google" in media.speech_banner()
+    assert "stays on this machine" in media.speech_banner(no_cloud=True)
+    monkeypatch.setitem(sys.modules, "notes", types.SimpleNamespace(engine=lambda: "local"))
+    assert media.speech_status() == {"stt": "local", "cloudSpeech": False}
+    assert "stays on this machine" in media.speech_banner()
+    monkeypatch.setitem(sys.modules, "notes", types.SimpleNamespace())
+    assert media.speech_status() == {"stt": "unknown", "cloudSpeech": False}
+    monkeypatch.setitem(sys.modules, "notes", types.SimpleNamespace(engine=lambda: 1 / 0))
+    assert media.speech_status()["stt"] == "unknown"
+
+
+def test_session_reports_speech_engine_and_updates(tmp_path, monkeypatch):
+    import types
+    from fastapi.testclient import TestClient
+    from sources import IngestSource
+    from store import Store
+    state = {"engine": "local"}
+    monkeypatch.setitem(sys.modules, "notes", types.SimpleNamespace(engine=lambda: state["engine"]))
+    store = Store(":memory:")
+    app = server.create_app(store, IngestSource(store), tmp_path, web_dir=tmp_path / "noweb")
+    with TestClient(app) as client:
+        time.sleep(0.2)
+        s = client.get("/api/session").json()
+        assert s["stt"] == "local" and s["cloudSpeech"] is False
+        with client.websocket_connect("/ws") as ws:
+            assert ws.receive_json()["stt"] == "local"
+            state["engine"] = "gemini"
+            for _ in range(100):
+                msg = ws.receive_json()
+                if msg["type"] == "session":
+                    break
+            assert msg["stt"] == "gemini" and msg["cloudSpeech"] is True
+        assert client.get("/api/session").json()["cloudSpeech"] is True
+
+
+def test_no_cloud_speech_flag_sets_local_backend(monkeypatch, capsys):
+    import types
+    monkeypatch.setenv("NOTES_STT_BACKEND", "unset")
+    monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(run=lambda *a, **k: None))
+    monkeypatch.setitem(sys.modules, "notes", types.SimpleNamespace(engine=lambda: "local"))
+    server.main(["--demo", "--no-cloud-speech", "--port", "8899"])
+    assert __import__("os").environ["NOTES_STT_BACKEND"] == "mlx"
+    assert "cloud speech OFF" in capsys.readouterr().out

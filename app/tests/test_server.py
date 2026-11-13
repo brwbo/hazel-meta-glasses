@@ -18,6 +18,10 @@ from store import Store  # noqa: E402
 GLB = b"glTF" + (2).to_bytes(4, "little") + (20).to_bytes(4, "little") + b"\x00" * 8
 
 
+def core(d):
+    return {k: v for k, v in d.items() if k not in ("stt", "cloudSpeech")}
+
+
 def talk(client, url, **kw):
     r = client.post(url, **kw)
     assert r.status_code == 202 and r.json()["queued"] is True, r.text
@@ -326,10 +330,11 @@ def test_session_wipe_and_rename(tmp_path):
     run_steps(src, 2)
     app = create_app(store, src, tmp_path, web_dir=tmp_path / "noweb", room=room)
     with TestClient(app) as client:
-        assert client.get("/api/session").json() == {"roomConsent": True, "text": "team said yes", "autoEnrolled": 2}
+        assert core(client.get("/api/session").json()) == {"roomConsent": True, "text": "team said yes",
+                                                           "autoEnrolled": 2}
         with client.websocket_connect("/ws") as ws:
-            assert ws.receive_json() == {"type": "session", "roomConsent": True, "text": "team said yes",
-                                         "autoEnrolled": 2}
+            assert core(ws.receive_json()) == {"type": "session", "roomConsent": True, "text": "team said yes",
+                                               "autoEnrolled": 2}
         guest = [p for p in store.list_people() if p["auto"]][0]["id"]
         client.post(f"/api/people/{guest}/notes", json={"text": "hi"})
         client.post(f"/api/people/{guest}/model", files={"file": ("x.glb", GLB, "model/gltf-binary")})
@@ -347,7 +352,7 @@ def test_session_wipe_and_rename(tmp_path):
 
 def test_session_off_by_default(demo):
     client, _, _ = demo
-    assert client.get("/api/session").json() == {"roomConsent": False, "text": None, "autoEnrolled": 0}
+    assert core(client.get("/api/session").json()) == {"roomConsent": False, "text": None, "autoEnrolled": 0}
     with client.websocket_connect("/ws") as ws:
         assert ws.receive_json()["type"] == "session"
 

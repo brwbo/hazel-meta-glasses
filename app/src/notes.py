@@ -252,7 +252,7 @@ def _decode(path):
         return _decode_ffmpeg(path)
 
 
-def transcribe(path, hotwords=None, person_name=None, lip=None):
+def _prepare(path, lip=None):
     path = str(path)
     if not os.path.isfile(path):
         raise FileNotFoundError("audio file not found")
@@ -260,12 +260,19 @@ def transcribe(path, hotwords=None, person_name=None, lip=None):
         from notes_audio import gate
     except ImportError:
         from .notes_audio import gate
-    audio = gate(_decode(path), lip)
+    return gate(_decode(path), lip)
+
+
+def _local(audio, hotwords, person_name, lip):
     if audio is None:
         return []
     model = _get_model()
     with _run_lock:
         return _run_transcribe(model, audio, hotwords, person_name, lenient=lip is not None and lip >= 0.5)
+
+
+def transcribe(path, hotwords=None, person_name=None, lip=None):
+    return _local(_prepare(path, lip), hotwords, person_name, lip)
 
 
 def _sentences(text):
@@ -446,8 +453,31 @@ def summarise(person_name, transcript, known_notes):
     return fallback_summarise(person_name, transcript, known_notes)
 
 
+def _gemini():
+    try:
+        import notes_gemini
+    except ImportError:
+        from . import notes_gemini
+    return notes_gemini
+
+
+def engine():
+    return _gemini().engine()
+
+
+def status():
+    return _gemini().status()
+
+
 def process_audio(path, person_name, known_notes, hotwords=None, lip=None):
-    if lip is not None:
+    g = _gemini()
+    if g.enabled():
+        audio = _prepare(path, lip)
+        out = g.process(audio, person_name, known_notes, hotwords) if audio is not None else None
+        if out is not None:
+            return out
+        segments = _local(audio, hotwords, person_name, lip)
+    elif lip is not None:
         segments = transcribe(path, hotwords=hotwords, person_name=person_name, lip=lip)
     elif hotwords or person_name:
         segments = transcribe(path, hotwords=hotwords, person_name=person_name)

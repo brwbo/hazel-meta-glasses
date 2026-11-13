@@ -1,0 +1,25 @@
+Third-party files in this folder. The 3D models, textures and film are built procedurally in code.
+
+vendor/three.module.min.js, vendor/RoomEnvironment.js, vendor/RoundedBoxGeometry.js
+  Three.js 0.169.0, MIT licence (vendor/THREE-LICENSE.txt)
+  https://cdn.jsdelivr.net/npm/three@0.169.0/
+  demo/vendor/ carries its own copy for the embedded demo (see demo/assets/CREDITS.txt).
+
+assets/fonts/young-serif-400.woff2
+  Young Serif by Bastien Sozeau, SIL Open Font Licence 1.1
+  https://cdn.jsdelivr.net/npm/@fontsource/young-serif@5.3.0/files/young-serif-latin-400-normal.woff2
+
+assets/fonts/hanken-grotesk-400.woff2, assets/fonts/hanken-grotesk-600.woff2
+  Hanken Grotesk by Alfredo Marco Pradil, SIL Open Font Licence 1.1
+  https://cdn.jsdelivr.net/npm/@fontsource/hanken-grotesk@5.0.8/files/
+
+assets/fonts/caveat-500.woff2
+  Caveat by Impallari Type, SIL Open Font Licence 1.1
+  https://cdn.jsdelivr.net/npm/@fontsource/caveat@5.0.8/files/caveat-latin-500-normal.woff2
+
+Own work copied in from sibling projects
+  js/ad/                    the Hazel ad's film modules (face-context-ad)
+  assets/hazel-ad-720p.mp4  the Hazel ad, re-encoded to 720p
+  demo/                     the product's web UI (face-context/web), copied by scripts/sync-demo.sh
+
+No third-party 3D models, images, audio or logos are used. Everyone shown is fictional.

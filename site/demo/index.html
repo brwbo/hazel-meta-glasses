@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F6F0E3">
+<title>Hazel</title>
+<meta name="description" content="Tap a face in the live camera view to see who they are and what you talked about.">
+<link rel="icon" href="data:,">
+<link rel="preload" href="assets/fonts/young-serif-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/hanken-grotesk-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="css/app.css?v=5">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/jsm/" } }
+</script>
+</head>
+<body>
+<main class="stage" id="stage" aria-label="Camera view. Select a face to see who they are.">
+  <div class="media" id="media"></div>
+  <div class="warmth" aria-hidden="true"></div>
+  <div class="faces" id="faces"></div>
+  <div class="stage-msg" id="stage-msg" hidden></div>
+</main>
+<div class="css3d" id="css3d">
+  <div class="card3d" id="card3d">
+    <aside class="card" id="card" aria-label="Person context" hidden>
+      <div class="card-face" id="card-inner">
+        <div class="grip" id="grip" aria-hidden="true"><i></i></div>
+        <button type="button" class="card-close" id="card-close" aria-label="Close card">
+          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+        <div class="card-body" id="card-body"></div>
+      </div>
+    </aside>
+  </div>
+</div>
+<canvas class="gl" id="gl" aria-hidden="true"></canvas>
+<p class="live" id="live" data-state="connecting"><i class="dot" aria-hidden="true"></i><span class="visually-hidden" id="live-sr" role="status">Connecting</span><i class="mic" id="mic" role="img" data-state="off" aria-label="Microphone off"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M10 3a2 2 0 0 1 2 2v5a2 2 0 0 1-4 0V5a2 2 0 0 1 2-2zM5.5 9.5a4.5 4.5 0 0 0 9 0M10 14v3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></i></p>
+<div class="corner">
+  <button type="button" class="session-dot" id="session-dot" aria-expanded="false" aria-controls="session-pop" hidden><i aria-hidden="true"></i></button>
+  <section class="session-pop" id="session-pop" aria-label="Room session" hidden></section>
+</div>
+<p class="caption" id="caption" aria-live="polite"></p>
+<noscript><p class="noscript">Hazel shows the live camera view and a card for each person in it. It needs JavaScript to run.</p></noscript>
+<script type="module" src="js/app.js?v=5"></script>
+</body>
+</html>

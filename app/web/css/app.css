@@ -2,6 +2,8 @@
  * paper: #F6F0E3 · accent: #4F6B4A · display: Young Serif · body: Hanken Grotesk · hero: the camera view itself, faces bracketed in sage or clay · nav: none, one screen · footer: none · imagery: the live camera feed, warmed · signature: the card assembling from and breaking into oat flakes
  * axes: cream/friendly serif/moss · posture: stage · contrast: pass · fold: pass · v2.0.0 */
 /* Hallmark · pre-emit critique: P4 H4 E5 S4 R4 V5 · weakest: S, the card carries every profile field so its rhythm is tight; labels stay one quiet step below body */
+/* Hallmark · waive 24b · card interior uses 6, 10, 18 and 22px steps · a full profile has to fit a 340 to 420px card without scrolling the header */
+/* Hallmark · answered F4 · filled danger button · it only appears inside the delete confirmation, never beside the primary */
 @import url("./tokens.css");
 @import url("./base.css");
 @import url("./card.css");
@@ -42,20 +44,22 @@ body { overflow: hidden; overscroll-behavior: none; }
 .session-dot i { width: 14px; height: 9px; border-radius: 5px; border: 2px solid var(--color-accent); }
 .session-dot:hover { background: var(--color-paper-2); }
 .session-dot:active { transform: scale(0.96); }
-.session-pop { width: min(300px, calc(100vw - 28px)); margin-left: -72px; padding: var(--space-md); border-radius: var(--radius-card); background: var(--color-paper-2); box-shadow: var(--shadow-float); display: grid; gap: var(--space-xs); }
+.session-pop { width: 280px; margin-left: -72px; padding: var(--space-md); border-radius: var(--radius-card); background: var(--color-paper-2); box-shadow: var(--shadow-float); display: grid; gap: var(--space-xs); }
 .session-pop[hidden] { display: none; }
 .session-text { font-size: var(--text-sm); color: var(--color-ink-2); }
 
-.caption { position: fixed; left: calc(50% - var(--dock, 0px)); bottom: max(20px, env(safe-area-inset-bottom)); translate: -50% 0; z-index: var(--z-chrome); max-width: min(52ch, calc(100vw - 32px)); margin: 0; padding: 0.5em 1em 0.55em; border-radius: 1.2em; background: var(--color-veil); box-shadow: var(--shadow-card); font-size: var(--text-md); line-height: 1.35; text-align: center; text-wrap: balance; opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity var(--dur-short) var(--ease-out), transform var(--dur-short) var(--ease-out); }
-.caption.is-on { opacity: 1; transform: none; }
+.caption { position: fixed; left: calc(50% - var(--dock, 0px)); bottom: max(20px, env(safe-area-inset-bottom)); translate: -50% 0; z-index: var(--z-chrome); max-width: min(52ch, calc(100% - 32px)); margin: 0; padding: 0.5em 1em 0.55em; border-radius: 1.2em; background: var(--color-veil); box-shadow: var(--shadow-card); font-size: var(--text-md); line-height: 1.35; text-align: center; text-wrap: balance; pointer-events: none; transition: opacity var(--dur-short) var(--ease-out), transform var(--dur-short) var(--ease-out); }
+.js .caption { opacity: 0; transform: translateY(8px); }
+.js .caption.is-on { opacity: 1; transform: none; }
+.caption:empty { display: none; }
 body.has-card { --dock: calc(var(--card-w) / 2 + 20px); }
 .caption-who { margin-right: 0.5em; font-weight: 600; color: var(--color-accent); }
 .caption-text { color: var(--color-ink); }
 
-.stage-msg { position: absolute; left: 50%; top: 50%; translate: -50% -50%; z-index: var(--z-msg); width: min(360px, calc(100vw - 32px)); text-align: center; }
+.stage-msg { position: absolute; left: 50%; top: 50%; translate: -50% -50%; z-index: var(--z-msg); width: min(360px, calc(100% - 32px)); text-align: center; }
 .stage-msg h2 { font-size: var(--text-xl); font-weight: 400; line-height: 1.15; letter-spacing: var(--tracking-display); color: var(--color-ink); }
 .stage-msg p { margin: var(--space-xs) auto 0; max-width: 30ch; font-size: var(--text-md); color: var(--color-ink-2); }
-.msg-empty, .msg-lost { display: grid; justify-items: center; padding: var(--space-lg) var(--space-lg) calc(var(--space-lg) + 2px); border-radius: var(--radius-card); background: var(--color-veil); box-shadow: var(--shadow-float); }
+.msg-empty, .msg-lost { display: grid; justify-items: center; padding: var(--space-lg); border-radius: var(--radius-card); background: var(--color-veil); box-shadow: var(--shadow-float); }
 .msg-lost .btn { margin-top: var(--space-md); }
 .noscript { position: fixed; left: 50%; top: 50%; translate: -50% -50%; z-index: var(--z-chrome); max-width: 34ch; padding: var(--space-lg); border-radius: var(--radius-card); background: var(--color-paper-2); box-shadow: var(--shadow-float); }
 

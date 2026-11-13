@@ -11,6 +11,7 @@ import { createFlakes } from "./gl/flakes.js";
 import { createBrackets } from "./gl/brackets.js";
 import { createCardRig } from "./gl/card-rig.js";
 
+document.documentElement.classList.add("js");
 const params = new URLSearchParams(location.search);
 let mock = null;
 if (params.get("mock") === "1") {

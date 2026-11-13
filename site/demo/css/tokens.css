@@ -1,0 +1,48 @@
+@font-face { font-family: "Young Serif"; src: url("../assets/fonts/young-serif-400.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Hanken Grotesk"; src: url("../assets/fonts/hanken-grotesk-400.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Hanken Grotesk"; src: url("../assets/fonts/hanken-grotesk-600.woff2") format("woff2"); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: "Caveat"; src: url("../assets/fonts/caveat-500.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
+
+:root {
+  --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px; --space-xl: 40px; --space-2xl: 64px; --space-3xl: 96px;
+  --text-xs: 0.8125rem; --text-sm: 0.875rem; --text-md: 1rem; --text-lg: 1.25rem; --text-xl: 1.75rem; --text-2xl: clamp(1.75rem, 2.4vw + 1rem, 2.75rem);
+  --text-hand: 1.625rem;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-micro: 120ms; --dur-short: 220ms; --dur-write: 900ms;
+  --container: 1440px; --gutter: clamp(16px, 4vw, 64px);
+  --section-gap-s: 80px; --section-gap: 96px; --section-gap-l: 120px; --gap-columns: 24px;
+  --z-faces: 10; --z-msg: 12; --z-leader: 18; --z-card: 20; --z-ghost: 21; --z-flakes: 30; --z-chrome: 40;
+  --card-w: clamp(340px, 30vw, 420px); --tap: 44px;
+
+  --color-paper: #F6F0E3; --color-paper-2: #FFFDF8; --color-paper-3: #EDE4D1;
+  --color-ink: #23281F; --color-ink-2: #3F4638; --color-muted: #666C5C;
+  --color-rule: #DDD3BD;
+  --color-accent: #4F6B4A; --color-accent-ink: #FFFDF8; --color-focus: #2E4230;
+  --color-known: #55784F; --color-known-soft: #D3DEC8;
+  --color-unknown: #B05E38; --color-unknown-soft: #F1D9C8; --color-unknown-ink: #FFFDF8;
+  --color-live: #B8432E; --color-danger: #A3402B; --color-danger-ink: #FFFDF8;
+  --color-halo: rgb(255 253 248 / 0.9); --color-sheen: #F8F2E6; --color-warm: rgb(230 205 156 / 0.34); --color-scrim: rgb(35 40 31 / 0.18);
+  --color-shadow: rgb(72 58 30 / 0.16);
+  --color-shadow-deep: rgb(72 58 30 / 0.3);
+  --color-clear: rgb(246 240 227 / 0);
+  --color-vignette: rgb(120 98 56 / 0.2);
+  --color-veil: rgb(255 253 248 / 0.86);
+  --mask-on: #000; --mask-off: rgb(0 0 0 / 0);
+
+  --c-sage: #A9BFA0; --c-sage-soft: #D3DEC8; --c-moss: #4F6B4A; --c-moss-deep: #2E4230;
+  --c-oat: #E6CD9C; --c-oat-deep: #C89A58; --c-toast: #A9743C;
+  --c-clay: #CF8E6A; --c-rust: #A9553A; --c-ink-cloth: #3F4638; --c-cream-cloth: #F2ECDD; --c-dusk: #7C8FA0;
+  --c-skin: #B97A56; --c-skin-fair: #E9C3A2; --c-skin-tan: #D29C74; --c-skin-brown: #8C5A3D; --c-skin-deep: #5F3B2A;
+  --c-hair: #3A2A22; --c-hair-black: #1E1A18; --c-hair-auburn: #8C4A2B; --c-hair-grey: #B9B2A6; --c-hair-blond: #C9A566;
+  --c-wood: #D8B88A; --c-frame: #1B1F1A; --c-lens: #2A3128; --c-glow: #E9FFD2;
+  --c-metal: #CFCAC0; --c-screen: #F2ECDD; --c-ground-shadow: #7A6540; --c-coffee: #5B3A26; --c-tortoise: #7A4A2A;
+
+  --font-display: "Young Serif", ui-serif, Georgia, serif;
+  --font-body: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-outlier: "Caveat", "Bradley Hand", cursive;
+  --radius-card: 22px; --radius-sm: 10px; --radius-pill: 999px; --rule-hair: 1px;
+  --shadow-card: 0 10px 30px -12px var(--color-shadow-deep), 0 2px 6px var(--color-shadow);
+  --shadow-float: 0 34px 60px -28px var(--color-shadow-deep), 0 12px 24px -14px var(--color-shadow);
+  --tracking-display: -0.02em;
+}

@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title data-brand="title">Hazel. Notes for in-person conversations, built for Meta AI glasses</title>
+  <meta name="description" data-brand="description" content="Hazel is an independent hackathon prototype built for Meta AI glasses: it sees who you are talking to, remembers them, and turns what gets said into notes on a card.">
+  <meta name="theme-color" content="#F6F0E3">
+  <link rel="icon" href="data:,">
+  <link rel="preload" href="assets/fonts/young-serif-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/hanken-grotesk-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/site.css?v=9">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/" } }
+  </script>
+</head>
+<body>
+  <a class="skip" href="#demo">Skip to the demo</a>
+  <header class="nav">
+    <a class="brand" href="#top">Hazel</a>
+    <nav aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#demo">Demo</a>
+      <a href="#build">How it is built</a>
+      <a href="#consent">Consent and data</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <div class="film" id="film">
+      <div class="film-stage" id="stage">
+        <div class="scene-box"><canvas class="scene" id="scene" aria-hidden="true"></canvas></div>
+        <div class="veil" id="veil" aria-hidden="true"></div>
+        <div class="chip chip-tag" id="chip-tag" aria-hidden="true"></div>
+        <div class="chip chip-speech" id="chip-speech" aria-hidden="true"></div>
+
+        <section class="hero" id="hero" aria-labelledby="hero-title">
+          <h1 class="wordmark" id="hero-title">Hazel</h1>
+          <p class="pill" data-brand="pill">Built for Meta AI glasses</p>
+          <p class="promise">Notes for the conversations you have in person.</p>
+          <div class="actions">
+            <a class="btn btn-primary" href="#demo">Try the demo</a>
+          </div>
+        </section>
+
+        <section class="how" id="how" aria-labelledby="how-title">
+          <h2 class="how-title" id="how-title">How it works</h2>
+          <ol class="beats" id="beats">
+            <li data-in="2.05" data-out="3.9">
+              <canvas class="still" width="720" height="540" aria-hidden="true"></canvas>
+              <h3>Your glasses see who is there.</h3>
+              <p>The camera in the frame finds each face in view and locks on to it.</p>
+            </li>
+            <li data-in="4.25" data-out="6.85">
+              <canvas class="still" width="720" height="540" aria-hidden="true"></canvas>
+              <h3>A card opens beside them.</h3>
+              <p>Name, role and what you talked about, next to the person it belongs to.</p>
+            </li>
+            <li data-in="7.15" data-out="9.9">
+              <canvas class="still" width="720" height="540" aria-hidden="true"></canvas>
+              <h3>What gets said becomes notes and follow-ups.</h3>
+              <p>Speech is transcribed as you talk and filed under the right person, and promises turn into follow-ups.</p>
+            </li>
+          </ol>
+        </section>
+        <div class="rail" id="rail" aria-hidden="true"><i></i><i></i><i></i></div>
+      </div>
+    </div>
+
+    <section class="statement" id="why">
+      <div class="container">
+        <p class="statement-text">Granola turns calls into notes. Hazel does it for the conversations you have in person.</p>
+      </div>
+    </section>
+
+    <section class="made" id="made" aria-labelledby="made-title">
+      <div class="container made-grid">
+        <div class="made-copy">
+          <h2 id="made-title" data-brand="madeFor">Made for Ray‑Ban Meta (Gen 2) and Meta Ray‑Ban Display</h2>
+          <p class="made-lead">On the stage below, the people are simulated. In the real product they are the people in front of you, seen through the glasses.</p>
+          <p data-brand="toolkit">The iPhone relay app is built on Meta’s Wearables Device Access Toolkit.</p>
+          <p class="fine" data-brand="disclaimer">An independent hackathon prototype. Not affiliated with, sponsored or endorsed by Meta Platforms, Inc. Meta, Ray‑Ban Meta and Meta Ray‑Ban Display are trademarks of their respective owners.</p>
+          <div class="brand-slot" id="brand-slot" hidden></div>
+        </div>
+        <div class="made-scene"><canvas id="lens" aria-hidden="true"></canvas></div>
+      </div>
+    </section>
+
+    <section class="demo" id="demo" aria-labelledby="demo-title">
+      <div class="container">
+        <div class="head">
+          <h2 id="demo-title">Try it on a room of made-up people</h2>
+          <p>This is the product’s own interface, running on a simulated room instead of a camera. Tap a moving head to open that person’s card, switch to someone else, or rename a guest.</p>
+        </div>
+      </div>
+      <div class="demo-wide">
+        <div class="demo-frame" id="demo-frame" data-state="idle">
+          <img class="demo-poster" src="assets/demo-poster.jpg" width="1600" height="900" alt="The Hazel demo: a warm 3D room of five fictional people, with a context card open beside one of them." loading="lazy" decoding="async">
+        </div>
+        <div class="demo-bar">
+          <button class="btn" id="demo-restart" type="button">Restart demo</button>
+          <p class="demo-caption">Simulated people and speech</p>
+          <p class="fine">The demo never asks for your camera or microphone.</p>
+          <p class="visually-hidden" id="demo-status" role="status"></p>
+        </div>
+        <noscript><p class="fine">The live demo needs JavaScript. The picture above shows it, and <a href="assets/hazel-ad-720p.mp4">the ad</a> plays without it.</p></noscript>
+      </div>
+    </section>
+
+    <section class="build" id="build" aria-labelledby="build-title">
+      <div class="container">
+        <div class="head">
+          <h2 id="build-title">How it is built</h2>
+          <p>Three devices in a line. The glasses capture, the phone passes it on, the laptop does the work.</p>
+        </div>
+        <ol class="flow">
+          <li>
+            <svg class="flow-icon" viewBox="0 0 64 64" aria-hidden="true"><path d="M6 27h4l2-5h14l3 5h6l3-5h14l2 5h4M12 22l-2 12c0 5 3 8 8 8h3c5 0 8-4 8-9v-6M54 22l-2-0M52 22l2 12c0 5-3 8-8 8h-3c-5 0-8-4-8-9v-6"/></svg>
+            <h3>Meta AI glasses</h3>
+            <p>The camera and microphones on the frame.</p>
+          </li>
+          <li>
+            <svg class="flow-icon" viewBox="0 0 64 64" aria-hidden="true"><rect x="20" y="8" width="24" height="48" rx="6"/><path d="M28 14h8M27 34l5-5 5 5M32 29v12"/></svg>
+            <h3>iPhone relay</h3>
+            <p>An app built on the Wearables Device Access Toolkit passes video frames and audio on over the local network.</p>
+          </li>
+          <li>
+            <svg class="flow-icon" viewBox="0 0 64 64" aria-hidden="true"><rect x="12" y="14" width="40" height="27" rx="4"/><path d="M5 49h54M22 24h9M22 31h20"/></svg>
+            <h3>Laptop</h3>
+            <p>Finds and matches faces, transcribes speech, and serves the card you just used.</p>
+          </li>
+        </ol>
+        <p class="fine build-note">Face detection and matching run on the laptop with OpenCV’s YuNet and SFace models. Speech understanding uses Google’s Gemini API: each short speech segment is sent to Gemini, which returns the transcript, any name that was said, a summary and the follow-ups. Segments that sound like background music are filtered out first, and if Gemini is unavailable a Whisper model on the laptop takes over.</p>
+      </div>
+    </section>
+
+    <section class="consent" id="consent" aria-labelledby="consent-title">
+      <div class="container consent-grid">
+        <h2 id="consent-title">Consent and data, plainly</h2>
+        <div class="consent-col">
+          <h3>In this demo build</h3>
+          <ul>
+            <li>Enrolment is automatic for everyone in view.</li>
+            <li>The operator presumes consent for a test session.</li>
+            <li>Faces and notes are kept in memory on the laptop and wiped when the server stops.</li>
+            <li>Short speech segments are sent to Google’s Gemini API to be turned into notes. Faces are never sent.</li>
+          </ul>
+        </div>
+        <div class="consent-col">
+          <h3>In a real product</h3>
+          <ul>
+            <li>Each person would need to opt in, explicitly, before being remembered.</li>
+            <li>The glasses platform’s rules about identifying people also apply.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="ad" id="ad" aria-labelledby="ad-title">
+      <div class="container">
+        <div class="head">
+          <h2 id="ad-title">The ad</h2>
+          <p>Thirteen seconds. The scenes at the top of this page are the same film, run by your scroll.</p>
+        </div>
+        <video class="ad-video" id="ad-video" controls playsinline preload="none" poster="assets/hazel-ad-poster.jpg" width="1280" height="720">
+          <source src="assets/hazel-ad-720p.mp4" type="video/mp4">
+          <a href="assets/hazel-ad-720p.mp4">Download the ad</a>
+        </video>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-grid">
+      <p class="footer-mark">Hazel</p>
+      <div>
+        <p data-brand="challenge">Built at Junction 2026 for the challenge “AI Glasses for Everyone, Everyday”.</p>
+        <p>Source on GitHub: link to come.</p>
+      </div>
+      <div class="footer-legal">
+        <p class="fine" data-brand="disclaimer">An independent hackathon prototype. Not affiliated with, sponsored or endorsed by Meta Platforms, Inc. Meta, Ray‑Ban Meta and Meta Ray‑Ban Display are trademarks of their respective owners.</p>
+        <p class="fine">Hazel is a placeholder name. It is not affiliated with Granola either. Everyone shown on this page is fictional.</p>
+      </div>
+    </div>
+  </footer>
+  <script type="module" src="js/main.js?v=9"></script>
+</body>
+</html>

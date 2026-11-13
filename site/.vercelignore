@@ -1,0 +1,6 @@
+scripts/
+demo-room/
+.DS_Store
+.env
+.env.*
+.vercel

@@ -3,7 +3,7 @@ import asyncio
 import importlib
 import logging
 import shutil
-import socket
+import os
 import sys
 import tempfile
 import threading
@@ -24,7 +24,7 @@ SRC = Path(__file__).resolve().parent
 ROOT = SRC.parent
 sys.path.insert(0, str(SRC))
 from media import (AudioQueue, audio_suffix, call_process, first_upload, image_to_jpeg, lip_gate,  # noqa: E402
-                   read_body, warm_up_notes)
+                   lan_ip, read_body, speech_banner, speech_status, warm_up_notes)
 from sources import CameraSource, IngestSource, RoomConsent  # noqa: E402
 from store import ConsentRequired, Store  # noqa: E402
 
@@ -84,12 +84,19 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
     model_dir.mkdir(parents=True, exist_ok=True)
     hub = Hub()
 
+    speech = {"stt": "unknown", "cloudSpeech": False}
+
     def session():
         return {"roomConsent": room is not None, "text": room.text if room else None,
-                "autoEnrolled": store.count_auto()}
+                "autoEnrolled": store.count_auto(), **speech}
 
     async def pump():
+        tick = 0
         while True:
+            if tick % 24 == 0 and (now := await run_in_threadpool(speech_status)) != speech:
+                speech.update(now)
+                hub.broadcast({"type": "session", **session()})
+            tick += 1
             hub.broadcast(source.detections())
             line = source.transcript()
             if line:
@@ -416,15 +423,6 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
     return app
 
 
-def lan_ip():
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("10.255.255.255", 1))
-            return s.getsockname()[0]
-    except OSError:
-        return "127.0.0.1"
-
-
 def main(argv=None):
     p = argparse.ArgumentParser(description="face-context viewer server")
     p.add_argument("--demo", action="store_true", help="synthetic frames and fictional people, no camera")
@@ -438,7 +436,10 @@ def main(argv=None):
                    help="override the stored consent text, e.g. who actually agreed")
     p.add_argument("--no-auto-enrol", action="store_true", help="turn off automatic enrolment (on by default)")
     p.add_argument("--keep", action="store_true", help="with --room-consent, keep the DB instead of an ephemeral one")
+    p.add_argument("--no-cloud-speech", action="store_true", help="never send audio to Google; local speech only")
     args = p.parse_args(argv)
+    if args.no_cloud_speech:
+        os.environ["NOTES_STT_BACKEND"] = "mlx"
     if args.room_consent is not None and not args.room_consent.strip():
         p.error("--room-consent needs a non-empty text describing who agreed and when")
     mode = "demo" if args.demo else (args.source or "camera")
@@ -458,6 +459,7 @@ def main(argv=None):
     app = create_app(store, source, data_dir, ingest=mode == "ingest", room=room, warm_notes=True)
     ip = lan_ip()
     print(f"face-context ({mode}) viewer: http://{ip}:{args.port}/  (local http://127.0.0.1:{args.port}/)", flush=True)
+    print(speech_banner(args.no_cloud_speech), flush=True)
     if mode == "ingest":
         print(f"ingest frames: ws://{ip}:{args.port}/ingest   audio: http://{ip}:{args.port}/api/ingest/audio", flush=True)
     if room:

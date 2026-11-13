@@ -1,6 +1,7 @@
 import importlib
 import inspect
 import logging
+import socket
 import threading
 import time
 from collections import deque
@@ -171,3 +172,33 @@ class AudioQueue:
                 with self.cond:
                     self.busy = False
                     self.cond.notify_all()
+
+
+def lan_ip():
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def speech_status():
+    try:
+        engine = importlib.import_module("notes").engine
+        stt = str(engine()).lower()
+    except Exception:
+        return {"stt": "unknown", "cloudSpeech": False}
+    stt = stt if stt in ("gemini", "local") else "unknown"
+    return {"stt": stt, "cloudSpeech": stt == "gemini"}
+
+
+def speech_banner(no_cloud=False):
+    if no_cloud:
+        return "Speech: cloud speech OFF (--no-cloud-speech); audio stays on this machine (local model)."
+    status = speech_status()
+    if status["cloudSpeech"]:
+        return "Speech: cloud speech ON (Gemini key present); audio chunks are sent to Google for transcription."
+    if status["stt"] == "local":
+        return "Speech: cloud speech off (no Gemini key); audio stays on this machine (local model)."
+    return "Speech: engine unknown (notes.engine() unavailable); audio goes to whatever notes.py uses."

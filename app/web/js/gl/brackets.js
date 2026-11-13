@@ -70,6 +70,7 @@ export function createBrackets({ world, overlay, flakes }) {
     g.textBaseline = "middle";
     g.textAlign = "center";
     g.fillText(text, w / 2, h / 2 + 1, tw);
+    it.tag.tex.dispose();
     it.tag.tex.needsUpdate = true;
     it.tagSize = [w, h];
   }
@@ -149,9 +150,9 @@ export function createBrackets({ world, overlay, flakes }) {
       }
       const tagIn = ease.outBack(clamp((age - 0.24) / 0.38));
       const pop = 1 + 0.24 * Math.sin(clamp((now - it.popAt) / 520) * Math.PI);
-      const ts = Math.max(0.001, tagIn) * pop * (1 + it.sel * 0.12);
+      const ts = Math.max(0.001, tagIn) * pop * (1 + it.sel * 0.12) * (world.size.w < 720 ? 0.74 : 1);
       it.tagMesh.scale.set(it.tagSize[0] * ts, it.tagSize[1] * ts, 1);
-      it.tagMesh.position.set(0, r.h / 2 + 12 + it.tagSize[1] / 2 + (1 - tagIn) * -8, 14);
+      it.tagMesh.position.set(0, r.h / 2 + 10 + (it.tagSize[1] * ts) / 2 + (1 - tagIn) * -8, 14);
       it.tagMat.opacity = clamp((age - 0.24) / 0.2) * it.alpha;
       if (!it.puffed && age > 0.05) {
         it.puffed = true;
