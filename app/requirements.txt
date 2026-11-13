@@ -1,0 +1,7 @@
+numpy
+opencv-python
+fastapi
+uvicorn[standard]
+python-multipart
+httpx
+pytest

@@ -1,0 +1,4 @@
+.venv/
+memory.db
+models/
+.env

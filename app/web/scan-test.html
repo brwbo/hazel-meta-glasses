@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>face scan test</title>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}
+</script>
+<style>
+html,body{margin:0;background:#04060b;color:#d6dde8;font:12px/1.5 ui-monospace,Menlo,monospace}
+main{padding:16px;max-width:1100px}
+h1{font-size:13px;font-weight:600;color:#8dbdff;margin:20px 0 8px}
+p{margin:0 0 8px;color:#8e9bb0;max-width:75ch}
+#results li{list-style:none;padding:2px 0;border-bottom:1px solid rgba(59,130,246,.1)}
+#results{margin:0;padding:0}
+.ok{color:#7fd1ff}.bad{color:#ff7b8a}.skip{color:#8e9bb0}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start}
+.row canvas{border:1px solid rgba(59,130,246,.24);background:#070b13}
+#frames canvas{width:120px;height:120px}
+#atlases canvas{width:320px;height:320px}
+.guide{width:180px;height:200px}
+.guide.small{width:72px;height:72px}
+#viewer{width:560px;height:380px;border:1px solid rgba(59,130,246,.24)}
+</style>
+</head>
+<body>
+<main>
+<p>Synthetic checks only: a generated mask shape and a generated pattern stand in for a face. No camera and no real face is used on this page.</p>
+<h1 id="summary">running</h1>
+<ul id="results"></ul>
+<h1>synthetic frames</h1><div class="row" id="frames"></div>
+<h1>pattern used as the face, atlas rebuilt from frames, atlas from one frontal frame</h1><div class="row" id="atlases"></div>
+<h1>guide states</h1><div class="row" id="guides"></div>
+<h1>exported model in the card viewer</h1><div id="viewer"></div>
+</main>
+<script type="module">
+import { POSITIONS, UVS, INDICES, VERTEX_COUNT, TRIANGLE_COUNT } from './facescan-topology.js';
+import * as M from './facescan-math.js';
+import { createSession, cellOf } from './facescan-session.js';
+import { fillUnseen } from './facescan-texture.js';
+import { exportGlb, uploadGlb, atlasCanvas } from './facescan-export.js';
+import { startAutoScan, scanSupported, renderScanGuide } from './facescan.js';
+import { loadLandmarker } from './facescan-landmarker.js';
+import { makeSubject, makeRenderer, fakeVisionModuleUrl, FRAME } from './facescan-testkit.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const params = new URLSearchParams(location.search);
+const personId = Number(params.get('person') || 3);
+const results = [];
+const list = document.getElementById('results');
+function check(name, pass, detail = '') {
+  results.push({ name, pass, detail });
+  const li = document.createElement('li');
+  li.className = pass === null ? 'skip' : pass ? 'ok' : 'bad';
+  li.textContent = `${pass === null ? 'SKIP' : pass ? 'PASS' : 'FAIL'}  ${name}${detail ? '  [' + detail + ']' : ''}`;
+  list.append(li);
+}
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const show = (id, canvas) => document.getElementById(id).append(canvas);
+const f = (x, d = 2) => Number(x).toFixed(d);
+
+async function section(name, fn) {
+  try {
+    await fn();
+  } catch (e) {
+    check(`${name} threw`, false, String(e && e.message ? e.message : e));
+  }
+}
+
+const subject = makeSubject();
+const synth = makeRenderer(subject);
+let fullModel = null;
+let glb = null;
+
+await section('math', () => {
+  const R = M.rotationFromAngles(32, -14);
+  const pts = new Float32Array(POSITIONS.length);
+  for (let i = 0; i < VERTEX_COUNT; i++) {
+    const x = POSITIONS[i * 3], y = POSITIONS[i * 3 + 1], z = POSITIONS[i * 3 + 2];
+    pts[i * 3] = 12 * (R[0] * x + R[1] * y + R[2] * z) + 150;
+    pts[i * 3 + 1] = 12 * (R[3] * x + R[4] * y + R[5] * z) - 90;
+    pts[i * 3 + 2] = 12 * (R[6] * x + R[7] * y + R[8] * z) + 7;
+  }
+  const fit = M.align(POSITIONS, pts, VERTEX_COUNT);
+  const pose = M.poseFromRotation(fit.R);
+  check('alignment recovers a known pose and scale', Math.abs(pose.yaw - 32) < 0.01 && Math.abs(pose.pitch + 14) < 0.01 && Math.abs(fit.s - 12) < 1e-3 && fit.residual < 1e-4, `yaw ${f(pose.yaw)} pitch ${f(pose.pitch)} scale ${f(fit.s, 3)} residual ${fit.residual.toExponential(1)}`);
+  const back = M.unpose(pts, fit, VERTEX_COUNT);
+  let worst = 0;
+  for (let i = 0; i < back.length; i++) worst = Math.max(worst, Math.abs(back[i] - POSITIONS[i]));
+  check('undoing the pose returns the canonical shape', worst < 1e-3, `max error ${worst.toExponential(1)} cm`);
+  const m = Float32Array.from([R[0], R[3], R[6], 0, R[1], R[4], R[7], 0, R[2], R[5], R[8], 0, 0, 0, -40, 1]);
+  const mp = M.poseFromMatrix(m);
+  check('yaw and pitch read from a 4x4 transformation matrix', Math.abs(mp.yaw - 32) < 0.01 && Math.abs(mp.pitch + 14) < 0.01, `yaw ${f(mp.yaw)} pitch ${f(mp.pitch)}`);
+  const normals = M.vertexNormals(POSITIONS, INDICES);
+  let nz = 0;
+  for (let i = 2; i < normals.length; i += 3) nz += normals[i];
+  check('topology has 468 vertices, 898 triangles, outward normals, uvs inside 0..1', VERTEX_COUNT === 468 && TRIANGLE_COUNT === 898 && INDICES.length === 2694 && Math.max(...INDICES) === 467 && nz / VERTEX_COUNT > 0.3 && Math.min(...UVS) >= 0 && Math.max(...UVS) <= 1, `mean normal z ${f(nz / VERTEX_COUNT)}`);
+  check('pose cells: frontal is the centre cell, far angles are refused', cellOf(0, 0) === 7 && cellOf(-50, -16) === 0 && cellOf(30, 3) === 8 && cellOf(80, 0) === -1 && cellOf(0, 40) === -1);
+});
+
+await section('session', async () => {
+  const session = createSession();
+  const first = session.ingest(synth.render(0, 0));
+  show('frames', synth.render(0, 0).canvas);
+  check('frontal frame accepted into the centre cell, pose from matrix', first.accepted && first.cell === 7 && first.newCell && first.poseSource === 'matrix', `residual ${f(first.residual, 3)} sharpness ${f(first.sharpness, 0)}`);
+  const h1 = session.progress();
+  check('after one frontal frame the hint asks for a turn and coverage is 1 of 7', (h1.hint === 'turn left' || h1.hint === 'turn right') && Math.abs(h1.coverage - 1 / 7) < 1e-6 && !h1.complete, `hint ${h1.hint} coverage ${f(h1.coverage)}`);
+  const blurred = session.ingest(synth.render(15, 0, { blur: 5 }));
+  check('motion-blurred frame rejected with hold still', !blurred.accepted && blurred.reason === 'frame is blurred' && session.progress().hint === 'hold still', blurred.reason);
+  const dark = session.ingest(synth.render(15, 0, { brightness: 0.12 }));
+  check('very dark frame rejected', !dark.accepted && dark.reason.includes('lighting'), dark.reason);
+  const far = session.ingest(synth.render(80, 0));
+  check('yaw of 80 degrees rejected', !far.accepted, far.reason);
+  const junk = synth.render(0, 0);
+  junk.landmarks = junk.landmarks.map((p, i) => ({ x: 0.5 + 0.3 * Math.sin(i * 12.9898), y: 0.5 + 0.3 * Math.sin(i * 78.233), z: 0.1 * Math.sin(i * 3.7) }));
+  const bad = session.ingest(junk);
+  check('scrambled landmarks (occlusion or tracking failure) rejected', !bad.accepted, `${bad.reason}`);
+  const none = session.ingest({ image: junk.image, landmarks: null, matrix: null });
+  check('frame with no face is ignored', !none.accepted && none.reason === 'no face found');
+  const flipped = synth.render(30, 0);
+  flipped.matrix = synth.render(-30, 0).matrix;
+  const fl = createSession().ingest(flipped);
+  check('a matrix that disagrees with the landmarks is not trusted', fl.accepted && fl.poseSource === 'landmarks' && Math.abs(fl.yaw - 30) < 3, `yaw ${f(fl.yaw)}`);
+  let reads = 0;
+  const lazy = synth.render(3, 1);
+  const lz = session.ingest({ width: FRAME, height: FRAME, getImage: () => (reads++, lazy.image), landmarks: lazy.landmarks, matrix: lazy.matrix });
+  check('a frame for an already filled cell skips the pixel read', lz.accepted && lz.sampled === false && reads === 0);
+  const poses = [[-25, 0], [25, 0], [0, 16], [0, -16], [-50, 0], [50, 0], [25, 16], [-25, -16]];
+  let hints = [], doneAt = -1;
+  for (const [yaw, pitch] of poses) {
+    const frame = synth.render(yaw, pitch, { brightness: 1 - Math.abs(yaw) / 300 });
+    const r = session.ingest(frame);
+    if (!r.accepted) check(`pose ${yaw},${pitch} accepted`, false, r.reason);
+    hints.push(session.progress().hint);
+    if (doneAt < 0 && session.progress().complete) doneAt = hints.length;
+    if (Math.abs(yaw) === 50 || pitch === 16) show('frames', frame.canvas);
+  }
+  const p = session.progress();
+  check('front, 25 left, 25 right, up and down are enough to complete; the wider sweep reaches coverage 1', doneAt === 4 && p.coverage === 1 && p.hint === 'done' && p.filled === 9 && p.total === 15, `complete after ${doneAt} more frames at coverage ${f(5 / 7)}, filled ${p.filled} of ${p.total}, hints ${[...new Set(hints)].join(' > ')}`);
+  const worse = session.ingest(synth.render(2, 1, { blur: 1.2 }));
+  check('a softer frame does not replace a sharper one in the same cell', worse.accepted ? !worse.replaced : true, worse.accepted ? 'kept existing' : worse.reason);
+  const t0 = performance.now();
+  fullModel = await session.build();
+  const ms = performance.now() - t0;
+  const fit = M.align(subject.positions, fullModel.positions, VERTEX_COUNT);
+  check('neutral shape matches the synthetic subject (after scale alignment)', fit.residual < 0.02, `relative rms ${f(fit.residual * 100, 2)}% from ${fullModel.shapeFrames} near-frontal frames`);
+  const { atlas } = fullModel;
+  let diff = 0, count = 0, holes = 0;
+  for (let i = 0; i < atlas.size * atlas.size; i++) {
+    if (atlas.rgba[i * 4 + 3] !== 255) holes++;
+    if (!atlas.seen[i]) continue;
+    for (let c = 0; c < 3; c++) diff += Math.abs(atlas.rgba[i * 4 + c] - subject.truth.data[i * 4 + c]);
+    count += 3;
+  }
+  check('atlas is 1024 square with no holes', atlas.size === 1024 && holes === 0, `${holes} empty texels, build ${f(ms, 0)} ms`);
+  check('atlas reproduces the known pattern where the camera saw it', diff / count < 14 && atlas.seenFraction > 0.9, `mean abs error ${f(diff / count, 1)} of 255, seen ${f(atlas.seenFraction * 100, 1)}% of the uv area`);
+  show('atlases', subject.canvas);
+  show('atlases', atlasCanvas(atlas));
+
+  const partial = createSession();
+  partial.ingest(synth.render(0, 0));
+  const pm = await partial.build();
+  let pholes = 0;
+  for (let i = 3; i < pm.atlas.rgba.length; i += 4) if (pm.atlas.rgba[i] !== 255) pholes++;
+  check('partial scan (one frontal frame) still builds a hole-free atlas', pholes === 0 && pm.coverage < 0.2 && pm.atlas.seenFraction < atlas.seenFraction, `seen ${f(pm.atlas.seenFraction * 100, 1)}% coverage ${f(pm.coverage)}`);
+  show('atlases', atlasCanvas(pm.atlas));
+  check('empty session builds nothing', (await createSession().build()) === null);
+
+  const size = 64, rgba = new Uint8ClampedArray(size * size * 4), seen = new Uint8Array(size * size);
+  seen[10 * size + 10] = 1;
+  rgba.set([200, 10, 10, 255], (10 * size + 10) * 4);
+  seen[50 * size + 50] = 1;
+  rgba.set([10, 10, 200, 255], (50 * size + 50) * 4);
+  fillUnseen(rgba, seen, size);
+  let opaque = true;
+  for (let i = 3; i < rgba.length; i += 4) opaque = opaque && rgba[i] === 255;
+  check('hole fill spreads the nearest seen colour', opaque && rgba[(2 * size + 2) * 4] > 150 && rgba[(60 * size + 60) * 4 + 2] > 150);
+});
+
+await section('export', async () => {
+  glb = await exportGlb(fullModel);
+  const bytes = new Uint8Array(await glb.arrayBuffer());
+  const view = new DataView(bytes.buffer);
+  const jsonLen = view.getUint32(12, true);
+  const json = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + jsonLen)));
+  const prim = json.meshes[0].primitives[0];
+  check('glb is binary glTF 2 with embedded JPEG texture', new TextDecoder().decode(bytes.subarray(0, 4)) === 'glTF' && view.getUint32(4, true) === 2 && json.images[0].mimeType === 'image/jpeg' && json.images[0].bufferView != null, `${(glb.size / 1024).toFixed(0)} kB`);
+  check('glb mesh has 468 vertices, 2694 indices, uvs and normals', json.accessors[prim.attributes.POSITION].count === 468 && json.accessors[prim.indices].count === 2694 && prim.attributes.TEXCOORD_0 != null && prim.attributes.NORMAL != null);
+  const url = URL.createObjectURL(glb);
+  const gltf = await new GLTFLoader().loadAsync(url);
+  let mesh = null;
+  gltf.scene.traverse((o) => { if (o.isMesh) mesh = o; });
+  mesh.geometry.computeBoundingBox();
+  const b = mesh.geometry.boundingBox;
+  check('glb reloads through GLTFLoader with its texture, sized in metres', mesh && mesh.material.map && mesh.material.map.image.width === 1024 && b.max.x - b.min.x > 0.1 && b.max.x - b.min.x < 0.25, `width ${f(b.max.x - b.min.x, 3)} m`);
+  URL.revokeObjectURL(url);
+});
+
+await section('backend', async () => {
+  const person = await fetch(`/api/people/${personId}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (!person) return check('backend upload', null, 'backend or person not reachable');
+  const url = await uploadGlb(glb, personId);
+  const got = await fetch(url, { cache: 'no-store' });
+  const body = await got.arrayBuffer();
+  check('upload stored and served back by the backend', url === `/models/${personId}.glb` && got.ok && body.byteLength === glb.size, `${url} ${body.byteLength} bytes`);
+  const { mountViewer } = await import('./viewer3d.js');
+  const viewer = mountViewer(document.getElementById('viewer'), { accent: '#3b82f6' });
+  viewer.setModel(`${url}?v=${Date.now()}`);
+  viewer.setLabel('synthetic mask');
+  window.viewer = viewer;
+  await wait(1500);
+  const status = document.getElementById('viewer').textContent;
+  check('card viewer accepted the model', !/failed|could not/.test(status), status.replace(/\s+/g, ' ').slice(0, 90));
+});
+
+await section('guide', () => {
+  const make = (cls) => {
+    const c = document.createElement('canvas');
+    c.className = cls;
+    show('guides', c);
+    return c;
+  };
+  const s = createSession();
+  renderScanGuide(make('guide'), s.progress());
+  s.ingest(synth.render(0, 0));
+  s.ingest(synth.render(25, 2));
+  renderScanGuide(make('guide'), s.progress());
+  for (const y of [-25, -50, 50]) s.ingest(synth.render(y, 0));
+  s.ingest(synth.render(0, 16));
+  s.ingest(synth.render(-8, -16));
+  const done = make('guide');
+  renderScanGuide(done, s.progress());
+  renderScanGuide(make('guide small'), s.progress(), { subtle: true });
+  const holder = document.createElement('div');
+  holder.className = 'guide';
+  document.getElementById('guides').append(holder);
+  renderScanGuide(holder, { ...s.progress(), hint: 'look up' }, { subtle: true });
+  check('guide draws on a canvas or into a container and labels itself', done.getAttribute('aria-label').includes('percent') && holder.querySelector('canvas') !== null, done.getAttribute('aria-label'));
+});
+
+await section('auto scan', async () => {
+  const realFetch = window.fetch;
+  const calls = [];
+  window.fetch = (input, init) => {
+    const u = String(input && input.url ? input.url : input);
+    calls.push({ u, method: (init && init.method) || 'GET', t: performance.now() });
+    if (u.endsWith('/api/people/7777')) return Promise.resolve(new Response(JSON.stringify({ id: 7777, consentNote: 'auto-captured', autoEnrolled: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    return realFetch(input, init);
+  };
+  const lib = fakeVisionModuleUrl();
+  const live = document.createElement('canvas');
+  const sweep = [[0, 0], [0, 0], [25, 0], [0, 0], [-25, 0], [0, 16], [0, -16]];
+  let current = synth.render(0, 0, { target: live });
+  let step = 0, detects = 0;
+  window.__fakeDetect = () => {
+    detects++;
+    return { faceLandmarks: [current.landmarks], facialTransformationMatrixes: [{ data: current.matrix }] };
+  };
+  const mover = setInterval(() => {
+    step++;
+    const [yaw, pitch] = sweep[Math.floor(step / 4) % sweep.length];
+    current = synth.render(yaw, pitch, { target: live });
+  }, 50);
+  const box = [80, 80, 240, 240];
+  const progress = [], models = [], errors = [];
+  const scan = startAutoScan({
+    source: live,
+    getTracks: () => [{ trackId: 1, personId, box }, { trackId: 2, personId: null, box }, { trackId: 3, personId: 9999, box }, { trackId: 4, personId: 7777, box }],
+    getSelectedPersonId: () => personId,
+    onProgress: (p) => progress.push(p),
+    onModel: (m) => models.push({ ...m, t: performance.now() }),
+    onError: (e) => errors.push(e),
+    assets: { lib },
+    intervalMs: 40,
+    uploadIntervalMs: 3000,
+  });
+  const started = performance.now();
+  while (performance.now() - started < 40000 && !(models.length >= 2 && models[models.length - 1].complete)) await wait(200);
+  await wait(300);
+  const posts = calls.filter((c) => c.method === 'POST' && c.u.includes('/model'));
+  const ids = new Set(progress.map((p) => p.personId));
+  check('auto scan started without any button and reported progress for the enrolled person only', progress.length > 10 && ids.size === 1 && ids.has(personId) && detects > 10, `${progress.length} progress events, people ${[...ids].join(',')}, ${detects} tracker calls`);
+  check('unenrolled, unknown and auto-enrolled tracks were never scanned or uploaded', posts.every((c) => c.u.includes(`/api/people/${personId}/model`)) && !progress.some((p) => p.personId === 9999 || p.personId === 7777 || p.personId == null));
+  const gaps = models.slice(1).map((m, i) => m.t - models[i].t);
+  check('model re-uploaded as coverage grew, never faster than the upload interval', models.length >= 2 && gaps.every((g) => g >= 3000) && models[0].partial && models[0].warning.length > 0 && models[models.length - 1].complete && models[models.length - 1].warning === '', `${models.length} uploads, coverage ${models.map((m) => f(m.coverage)).join(' > ')}, gaps ${gaps.map((g) => f(g / 1000, 1) + 's').join(', ')}`);
+  const t0 = models[0] ? models[0].timings : {};
+  check('first model lands within about a second of the first good frame, atlas built off the main thread', models.length > 0 && t0.sinceFirstFrameMs < 1500 && t0.worker === true, `first model ${f(t0.sinceFirstFrameMs, 0)} ms after first frame: atlas ${f(t0.atlasMs, 0)} ms, export ${f(t0.exportMs, 0)} ms, upload ${f(t0.uploadMs, 0)} ms; last model atlas ${f(models[models.length - 1].timings.atlasMs, 0)} ms`);
+  check('no errors during auto scan', errors.length === 0, errors.map((e) => e.code).join(','));
+  scan.stop();
+  const before = progress.length;
+  await wait(500);
+  check('stop() ends scanning', progress.length === before && !scan.running);
+  clearInterval(mover);
+
+  const soft = [];
+  const failing = startAutoScan({ source: live, getTracks: () => [{ trackId: 1, personId, box }], onError: (e) => soft.push(e), assets: { lib, model: '/no-such-model.task' }, intervalMs: 40 });
+  await wait(1500);
+  check('missing tracker model fails soft with a clear message', soft.length === 1 && soft[0].code === 'model-unavailable' && soft[0].fatal && !failing.running, soft[0] ? soft[0].message : 'no error raised');
+  const soft2 = [];
+  startAutoScan({ source: live, getTracks: () => [{ trackId: 1, personId, box }], onError: (e) => soft2.push(e), assets: { lib: '/no-such-lib.mjs' }, intervalMs: 40 });
+  await wait(1500);
+  check('missing tracker library fails soft with a clear message', soft2.length === 1 && soft2[0].code === 'library-unavailable', soft2[0] ? soft2[0].message : 'no error raised');
+
+  const getContext = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {
+    return /webgl/.test(kind) ? null : getContext.call(this, kind, ...rest);
+  };
+  const fresh = await import('./facescan.js?nowebgl=1');
+  const soft3 = [];
+  const off = fresh.startAutoScan({ source: live, getTracks: () => [{ trackId: 1, personId, box }], onError: (e) => soft3.push(e) });
+  await wait(100);
+  HTMLCanvasElement.prototype.getContext = getContext;
+  check('no WebGL: scanSupported() is false and the scan refuses to start with a message', scanSupported() === true && fresh.scanSupported() === false && soft3.length === 1 && soft3[0].code === 'unsupported' && !off.running, soft3[0] ? soft3[0].message : '');
+  window.fetch = realFetch;
+});
+
+await section('mediapipe', async () => {
+  let lm;
+  try {
+    lm = await loadLandmarker();
+  } catch (e) {
+    return check('real MediaPipe face landmarker loads from the pinned CDN version', null, `${e.code}: ${e.message}`);
+  }
+  check('real MediaPipe face landmarker loads from the pinned CDN version', true, `delegate ${lm.delegate}`);
+  const frame = synth.render(0, 0);
+  const found = lm.detect(frame.canvas);
+  check('real tracker runs on a canvas and finds no face in the synthetic pattern', found === null, found ? 'it reported a face on the pattern' : 'no face, as expected');
+});
+
+synth.dispose();
+const failed = results.filter((r) => r.pass === false).length;
+const skipped = results.filter((r) => r.pass === null).length;
+document.getElementById('summary').textContent = `${results.length - failed - skipped} passed, ${failed} failed, ${skipped} skipped`;
+window.__results = results;
+window.__done = true;
+</script>
+</body>
+</html>

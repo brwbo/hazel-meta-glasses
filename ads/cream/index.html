@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Notes for in-person conversations</title>
+  <meta name="description" content="A short film: AI glasses notice who you are talking to and open a card with who they are and what you discussed.">
+  <link rel="icon" href="data:,">
+  <meta name="theme-color" content="#F6F0E3">
+  <link rel="preload" href="assets/fonts/young-serif-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/style.css?v=1">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/" } }
+  </script>
+</head>
+<body>
+  <main class="stage" id="stage" data-state="static">
+    <canvas class="scene" id="scene" aria-hidden="true"></canvas>
+    <div class="veil" id="veil" aria-hidden="true"></div>
+    <div class="chip chip-tag" id="chip-tag" aria-hidden="true"></div>
+    <div class="chip chip-speech" id="chip-speech" aria-hidden="true"></div>
+    <p class="caption" id="caption" aria-hidden="true"></p>
+
+    <section class="endcard" id="endcard">
+      <h1 class="wordmark" id="product-name">Hazel</h1>
+      <p class="promise">Notes for the conversations you have in person.</p>
+      <p class="fine">A Junction 2026 prototype for AI glasses. Runs from a laptop and an iPhone relay. The demo keeps faces and notes in memory on your own laptop.</p>
+    </section>
+
+    <ol class="beats" id="beats" aria-label="What happens in the film">
+      <li data-in="0.15" data-out="1.6">You meet someone new.</li>
+      <li data-in="2.05" data-out="3.9">Your glasses notice.</li>
+      <li data-in="4.25" data-out="6.85">A card opens with who they are.</li>
+      <li data-in="7.15" data-out="9.95">What gets said becomes notes and follow-ups.</li>
+    </ol>
+
+    <button class="bigplay" id="bigplay" type="button" hidden>
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>
+      <span id="bigplay-label">Play film</span>
+    </button>
+
+    <div class="controls" id="controls" hidden>
+      <button class="ctl" id="toggle" type="button" aria-label="Pause">
+        <svg class="i-pause" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8 5.5v13M16 5.5v13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+        <svg class="i-play" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>
+      </button>
+      <button class="ctl" id="replay" type="button" aria-label="Replay from the start">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 12a7 7 0 1 0 2.3-5.2M5 4.5v3.8h3.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <input class="scrub" id="scrub" type="range" min="0" max="13.5" step="0.01" value="0" aria-label="Film position">
+    </div>
+  </main>
+  <script type="module" src="js/main.js?v=1"></script>
+</body>
+</html>

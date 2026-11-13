@@ -1,0 +1,67 @@
+/* Hallmark · shape: single-screen film stage with an end card · genre: playful · theme: custom · job: try · idea: "your glasses remember who you met, like notes for real life" · vibe: "warm oat paper, sage, calm, tactile"
+ * paper: #F6F0E3 · accent: #4F6B4A · display: Young Serif · body: Hanken Grotesk · hero: a 13.5 second 3D film that ends on the wordmark and one promise · nav: none, a film has no nav · footer: none, one fine-print line on the end card · imagery: the product, built in Three.js · signature: the context card breaking into oat flakes
+ * axes: cream/friendly serif/moss · posture: stage · contrast: pass · fold: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 · weakest: H, captions are kept to one short line each so the 3D carries the hierarchy */
+@import url("./tokens.css");
+@import url("./base.css");
+
+body { min-height: 100dvh; }
+
+.stage { position: relative; display: grid; gap: var(--space-lg); justify-items: start; align-content: center; min-height: 100dvh; padding: var(--space-2xl) var(--gutter); max-width: var(--container); margin-inline: auto; }
+.scene, .veil, .chip, .caption { display: none; }
+
+.wordmark { font-size: var(--text-wordmark); font-weight: 400; line-height: 1; letter-spacing: var(--tracking-display); color: var(--color-ink); }
+.promise { font-family: var(--font-display); font-size: var(--text-promise); line-height: 1.25; color: var(--color-ink-2); max-width: 26ch; text-wrap: balance; margin-top: var(--space-md); }
+.fine { font-size: var(--text-fine); line-height: 1.5; color: var(--color-muted); max-width: 44ch; margin-top: var(--space-lg); }
+.beats { margin: 0; padding: 0 0 0 1.4em; font-size: var(--text-md); line-height: 1.6; color: var(--color-ink-2); }
+.beats li { padding-left: var(--space-2xs); }
+.beats li::marker { color: var(--color-accent); font-weight: 600; }
+
+.js body { overflow: hidden; }
+.js .stage { position: fixed; inset: 0; display: block; min-height: 0; max-width: none; padding: 0; overflow: hidden; background: var(--color-paper); }
+.js .stage::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 46%, var(--color-clear) 56%, var(--color-vignette) 135%); }
+.js .scene { display: block; position: absolute; inset: 0; width: 100%; height: 100%; }
+.js .veil { display: block; position: absolute; inset: 0; background: var(--color-paper); opacity: 0; pointer-events: none; z-index: var(--z-veil); }
+
+.js .caption { display: block; position: absolute; left: var(--gutter); bottom: clamp(88px, 13vh, 150px); max-width: 16ch; margin: 0; padding: 0.32em 0.62em 0.4em; z-index: var(--z-overlay); font-family: var(--font-display); font-size: var(--text-caption); line-height: 1.1; letter-spacing: var(--tracking-display); color: var(--color-ink); text-wrap: balance; background: var(--color-paper-2); border-radius: var(--radius-card); box-shadow: var(--shadow-card); rotate: -1.4deg; opacity: 0; pointer-events: none; will-change: transform, opacity; }
+
+.js .chip { display: block; position: absolute; left: 0; top: 0; z-index: var(--z-overlay); padding: 0.5em 0.95em; font-size: clamp(1rem, 1.7vw, 2.1rem); font-weight: 600; line-height: 1.2; white-space: nowrap; opacity: 0; pointer-events: none; box-shadow: var(--shadow-card); will-change: transform, opacity; }
+.js .chip-tag { background: var(--color-accent); color: var(--color-accent-ink); border-radius: var(--radius-pill); }
+.js .chip-speech { background: var(--color-paper-2); color: var(--color-ink); border-radius: 1.2em 1.2em 0.3em 1.2em; font-weight: 400; white-space: normal; width: max-content; max-width: 21ch; }
+
+.js .endcard { position: absolute; inset: 9% var(--gutter) auto; z-index: var(--z-overlay); display: grid; justify-items: center; text-align: center; pointer-events: none; }
+.js .endcard > * { opacity: 0; will-change: transform, opacity; }
+.js .endcard .promise { max-width: 24ch; }
+.js .endcard .fine { position: fixed; left: var(--gutter); right: var(--gutter); bottom: clamp(20px, 4vh, 40px); margin: 0 auto; max-width: 62ch; text-align: center; }
+
+.js .beats { display: none; }
+.js .stage[data-state="poster"] .beats { display: block; position: absolute; left: var(--gutter); bottom: clamp(120px, 20vh, 200px); z-index: var(--z-overlay); max-width: 34ch; padding: var(--space-md) var(--space-lg) var(--space-md) calc(var(--space-lg) + 1.4em); background: var(--color-paper-2); border-radius: var(--radius-card); box-shadow: var(--shadow-card); font-size: var(--text-sm); }
+.js .stage[data-state="poster"] .fine { display: none; }
+
+.bigplay { position: absolute; left: 50%; bottom: clamp(72px, 12vh, 120px); translate: -50% 0; z-index: var(--z-controls); display: inline-flex; align-items: center; gap: var(--space-xs); min-height: 48px; padding: 0 var(--space-lg) 0 var(--space-md); border: 0; border-radius: var(--radius-pill); background: var(--color-accent); color: var(--color-accent-ink); font-weight: 600; font-size: var(--text-md); cursor: pointer; box-shadow: var(--shadow-card); transition: background-color var(--dur-short) var(--ease-out), scale var(--dur-short) var(--ease-out); }
+.bigplay:hover { background: var(--color-focus); }
+.bigplay:active { scale: 0.97; }
+
+.controls { position: absolute; right: var(--gutter); bottom: clamp(16px, 3vh, 28px); z-index: var(--z-controls); display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-2xs); border-radius: var(--radius-pill); background: var(--color-paper-2); box-shadow: var(--shadow-card); transition: opacity var(--dur-short) var(--ease-out); }
+.controls[hidden], .bigplay[hidden] { display: none; }
+.stage[data-state="playing"] .controls { opacity: 0.28; }
+.stage[data-state="playing"] .controls:hover, .stage[data-state="playing"] .controls:focus-within { opacity: 1; }
+.ctl { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--color-ink); cursor: pointer; transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out); }
+.ctl:hover { background: var(--color-paper-3); color: var(--color-focus); }
+.ctl:active { background: var(--color-rule); }
+.ctl:disabled, .bigplay:disabled { opacity: 0.45; cursor: not-allowed; }
+.ctl .i-play { display: none; }
+.stage:not([data-state="playing"]) .ctl .i-play { display: block; }
+.stage:not([data-state="playing"]) .ctl .i-pause { display: none; }
+.scrub { width: clamp(90px, 14vw, 200px); margin-right: var(--space-sm); accent-color: var(--color-accent); cursor: pointer; }
+
+.export .controls, .export .bigplay { display: none; }
+.export, .export * { cursor: none; }
+
+@media (max-width: 40rem) {
+  .js .caption { bottom: clamp(96px, 16vh, 150px); max-width: 13ch; }
+  .js .endcard { inset: 12% var(--gutter) auto; }
+  .js .endcard .fine { bottom: 84px; }
+  .bigplay { bottom: 150px; }
+  .js .stage[data-state="poster"] .beats { left: var(--gutter); right: var(--gutter); bottom: 216px; max-width: none; }
+}
