@@ -25,6 +25,7 @@ struct PersonRecord: Decodable {
     let id: Int
     let name: String?
     let role: String?
+    let summary: String?
     let notes: [PersonNote]?
     let thumbUrl: String?
 }
@@ -40,7 +41,7 @@ enum LensFormat {
             id: record.id,
             name: clip(record.name ?? "", to: 40),
             role: clip(record.role ?? "", to: 60),
-            facts: LensFacts.derive(from: record.notes ?? []),
+            facts: LensFacts.derive(summary: record.summary ?? "", name: record.name ?? "", notes: record.notes ?? []),
             photo: photo
         )
     }

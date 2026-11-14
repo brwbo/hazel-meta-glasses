@@ -13,6 +13,73 @@ enum LensFacts {
         (pattern("^i study\\b"), "Studies")
     ]
 
+    private static let placeholders = ["introduced themselves", "spoke about", "spoke with"]
+    private static let leadingName = pattern("^[A-Z][\\w'-]*( [A-Z][\\w'-]*){0,3}(?= (is|was) )", sensitive: true)
+    private static let pronoun = pattern("^(he|she|they)( is| are| was| were)? ")
+    private static let copula = pattern("^(is an? |is |was (?=born )|was an? |was )")
+    private static let breaks = pattern(
+        ",\\s*| and | (?=(born in|working|living|lives in|works|studies|from) )"
+    )
+
+    static func derive(summary: String, name: String, notes: [PersonNote]) -> [String] {
+        let fromSummary = clauses(in: summary, name: name)
+        return fromSummary.isEmpty ? derive(from: notes) : fromSummary
+    }
+
+    static func clauses(in summary: String, name: String) -> [String] {
+        let flat = flatten(summary).replacingOccurrences(of: "’", with: "'")
+        guard !flat.isEmpty else { return [] }
+        var result: [String] = []
+        for (index, sentence) in flat.components(separatedBy: ". ").enumerated() {
+            var rest = sentence.trimmingCharacters(in: .whitespaces)
+            if index == 0 {
+                rest = dropName(from: rest, name: flatten(name))
+            } else {
+                rest = replace(pronoun, in: rest, with: "")
+            }
+            let lowered = rest.lowercased()
+            if placeholders.contains(where: { lowered.hasPrefix($0) }) {
+                continue
+            }
+            rest = replace(copula, in: rest, with: "")
+            for piece in replace(breaks, in: rest, with: "\n").components(separatedBy: "\n") {
+                let line = finish(piece)
+                guard line.count >= 3, !result.contains(line) else { continue }
+                result.append(line)
+                if result.count == LensCard.factCount {
+                    return result
+                }
+            }
+        }
+        return result
+    }
+
+    private static func dropName(from sentence: String, name: String) -> String {
+        if !name.isEmpty, sentence.lowercased().hasPrefix(name.lowercased() + " ") {
+            return String(sentence.dropFirst(name.count + 1))
+        }
+        if let first = name.split(separator: " ").first, sentence.lowercased().hasPrefix(first.lowercased() + " ") {
+            return String(sentence.dropFirst(first.count + 1))
+        }
+        let stripped = replace(leadingName, in: sentence, with: "")
+        return stripped.trimmingCharacters(in: .whitespaces)
+    }
+
+    private static func finish(_ text: String) -> String {
+        var line = text.trimmingCharacters(in: .whitespaces)
+        while let last = line.last, ".…,;: ".contains(last) {
+            line.removeLast()
+        }
+        if let first = line.first {
+            line = first.uppercased() + line.dropFirst()
+        }
+        return LensFormat.clip(line, to: LensCard.factLimit)
+    }
+
+    private static func replace(_ expression: NSRegularExpression, in text: String, with template: String) -> String {
+        expression.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: template)
+    }
+
     static func derive(from notes: [PersonNote]) -> [String] {
         let usable = notes
             .compactMap { note -> (Double, String)? in
@@ -69,7 +136,7 @@ enum LensFacts {
         return expression.firstMatch(in: plain, range: NSRange(plain.startIndex..., in: plain)) != nil
     }
 
-    private static func pattern(_ source: String) -> NSRegularExpression {
-        (try? NSRegularExpression(pattern: source, options: [.caseInsensitive])) ?? NSRegularExpression()
+    private static func pattern(_ source: String, sensitive: Bool = false) -> NSRegularExpression {
+        (try? NSRegularExpression(pattern: source, options: sensitive ? [] : [.caseInsensitive])) ?? NSRegularExpression()
     }
 }
