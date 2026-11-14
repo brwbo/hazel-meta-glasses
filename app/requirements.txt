@@ -1,7 +1,10 @@
+av
+fastapi
+httpx
+mlx-lm
+mlx-whisper
 numpy
 opencv-python
-fastapi
-uvicorn[standard]
-python-multipart
-httpx
 pytest
+python-multipart
+uvicorn[standard]

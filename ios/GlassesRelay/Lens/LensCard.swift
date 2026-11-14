@@ -4,8 +4,7 @@ struct LensPerson: Equatable {
     let id: Int
     let name: String
     let role: String
-    let summary: String
-    let followup: String
+    let facts: [String]
     let photo: Data?
 }
 
@@ -16,8 +15,8 @@ enum LensCard: Equatable {
 
     static let side = 600
     static let photoSide = 160
-    static let summaryLimit = 120
-    static let followupLimit = 70
+    static let factLimit = 34
+    static let factCount = 3
     static let idleText = "Watching"
     static let newFaceText = "New face"
 }
@@ -26,9 +25,13 @@ struct PersonRecord: Decodable {
     let id: Int
     let name: String?
     let role: String?
-    let summary: String?
-    let followups: [String]?
+    let notes: [PersonNote]?
     let thumbUrl: String?
+}
+
+struct PersonNote: Decodable {
+    let ts: Double?
+    let text: String?
 }
 
 enum LensFormat {
@@ -37,8 +40,7 @@ enum LensFormat {
             id: record.id,
             name: clip(record.name ?? "", to: 40),
             role: clip(record.role ?? "", to: 60),
-            summary: clip(record.summary ?? "", to: LensCard.summaryLimit),
-            followup: clip(record.followups?.first ?? "", to: LensCard.followupLimit),
+            facts: LensFacts.derive(from: record.notes ?? []),
             photo: photo
         )
     }

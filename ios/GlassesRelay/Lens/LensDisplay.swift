@@ -240,17 +240,8 @@ final class LensDisplay {
                 }
                 .flexGrow(3)
             }
-            if !person.summary.isEmpty {
-                Text(person.summary, style: .body)
-            }
-            if !person.followup.isEmpty {
-                FlexBox(direction: .row, spacing: 8, crossAlignment: .center) {
-                    Icon(name: .checkmarkCircle, style: .outline)
-                    FlexBox {
-                        Text(person.followup, style: .meta)
-                    }
-                    .flexGrow(1)
-                }
+            for fact in person.facts {
+                Text("• " + fact, style: .body)
             }
         }
         .background(.card)

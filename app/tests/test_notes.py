@@ -324,7 +324,7 @@ def test_decode_caps_at_120_seconds(tmp_path):
 def test_fallback_summary_does_not_repeat_itself_or_quote_system_notes():
     import notes
     out = notes.fallback_summarise("Korky", "Hello, my name is Korky Por.", ["Hello, my name is Korky Por.", "named from speech: 'my name is Korky Por'"])
-    assert out["summary"].count("Korky Por") == 1
+    assert out["summary"] == "Introduced themselves as Korky."
     assert "named from speech" not in out["summary"]
 
 
@@ -340,3 +340,33 @@ def test_fallback_summary_keeps_facts_about_where_someone_is_from_and_what_they_
     out = notes.fallback_summarise("Korky", text, [])
     assert "born in Harare" in out["summary"]
 
+
+
+def test_summary_is_a_third_person_sentence_not_transcript():
+    import notes
+    out = notes.fallback_summarise("Korky Por", "I'm now living in Oxford in England, working as a children's book illustrator.", ["Hello, my name is Korky Por.", "I was born in Harari Zimbabwe.", "named from speech: 'my name is Korky Por'"])
+    assert out["summary"] == "Korky Por was born in Harari Zimbabwe, lives in Oxford in England and works as a children's book illustrator."
+
+
+def test_summary_for_a_bare_introduction_and_for_a_placeholder_name():
+    import notes
+    assert notes.fallback_summarise("Korky Por", "Hello, my name is Korky Por.", [])["summary"] == "Introduced themselves as Korky Por."
+    assert notes.fallback_summarise("Guest 1", "I am from Tampere.", [])["summary"] == "This person is from Tampere."
+    assert "not living" not in notes.fallback_summarise("Sam", "I'm not living in Oxford.", [])["summary"]
+    topics = notes.fallback_summarise("Sam", "We chatted about robotics research and grippers.", [])["summary"]
+    assert topics.startswith("Spoke about") and "robotics" in topics
+
+
+def test_local_summary_rejects_invented_names_and_skips_thin_notes(monkeypatch):
+    import notes_llm_local as m
+    assert m.valid("Korky Por was born in Harare.", "Korky Por", ["I was born in Harare."])
+    assert not m.valid("Korky Por works with Obama.", "Korky Por", ["I was born in Harare."])
+    monkeypatch.setitem(m._state, "model", object())
+    monkeypatch.setitem(m._state, "tok", object())
+    assert m.summarise("Sam", ["Hello, my name is Sam."]) is None
+
+
+def test_local_summary_rejects_gendered_pronouns():
+    import notes_llm_local as m
+    assert not m.valid("Korky Por is an illustrator and his work is popular.", "Korky Por", ["English illustrator."])
+    assert m.valid("Korky Por is an illustrator and their work is popular.", "Korky Por", ["English illustrator."])

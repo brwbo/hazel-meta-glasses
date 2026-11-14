@@ -66,34 +66,23 @@ struct HazelCardView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if !person.summary.isEmpty {
+            if !person.facts.isEmpty {
                 Rectangle()
                     .fill(Hazel.rule)
                     .frame(height: 1.5)
-                Text(person.summary)
-                    .font(Hazel.body(27))
-                    .lineSpacing(5)
-                    .foregroundStyle(Hazel.inkSoft)
-                    .lineLimit(4)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if !person.followup.isEmpty {
-                HStack(alignment: .top, spacing: 12) {
-                    RoundedRectangle(cornerRadius: 9)
-                        .strokeBorder(Hazel.accent, lineWidth: 2.5)
-                        .background(Hazel.paperTop, in: RoundedRectangle(cornerRadius: 9))
-                        .frame(width: 30, height: 30)
-                        .overlay {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(Hazel.accent)
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(person.facts.enumerated()), id: \.offset) { _, fact in
+                        HStack(alignment: .firstTextBaseline, spacing: 14) {
+                            Circle()
+                                .fill(Hazel.accent)
+                                .frame(width: 11, height: 11)
+                                .alignmentGuide(.firstTextBaseline) { $0[.bottom] + 7 }
+                            Text(fact)
+                                .font(Hazel.body(30))
+                                .foregroundStyle(Hazel.ink)
+                                .lineLimit(1)
                         }
-                    Text(person.followup)
-                        .font(Hazel.body(25))
-                        .foregroundStyle(Hazel.ink)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 1)
+                    }
                 }
             }
         }

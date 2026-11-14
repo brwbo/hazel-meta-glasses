@@ -160,6 +160,8 @@ def warm_up():
         except Exception:
             pass
         logging.getLogger("face-context").info("speech ready after %.1fs", time.time() - started)
+        warm_local_llm()
+        logging.getLogger("face-context").info("summary model ready after %.1fs", time.time() - started)
 
     t = threading.Thread(target=run, name="stt-warmup", daemon=True)
     t.start()
@@ -369,46 +371,33 @@ def merge_with_known(result, known_notes):
     return {"summary": result["summary"], "tags": [], "followups": result["followups"]}
 
 
-FACT_RE = re.compile(
-    r"\b(?:born in|i'?m from|i am from|live in|living in|based in|work(?:ing)? (?:as|at|for)|i'?m an? |i am an? |studying)\b",
-    re.I,
-)
+try:
+    from notes_facts import NAME_INTRO, SYSTEM, introduced, third_person_summary
+except ImportError:
+    from .notes_facts import NAME_INTRO, SYSTEM, introduced, third_person_summary
+
+
+try:
+    from notes_llm_local import summarise as local_summary, warm as warm_local_llm
+except ImportError:
+    from .notes_llm_local import summarise as local_summary, warm as warm_local_llm
 
 
 def fallback_summarise(person_name, transcript, known_notes):
-    sents = [x for x in _sentences(transcript) if not x.lower().startswith("named from speech")]
+    sents = [x for x in _sentences(transcript) if not SYSTEM.match(x)]
     known_notes = [str(n) for n in (known_notes or []) if str(n).strip()]
-    counts = Counter(_words(transcript))
-    for note in known_notes:
-        counts.update({w: 0.5 for w in _words(note)})
-    summary = ""
-    if sents:
-        scored = []
-        for i, s in enumerate(sents):
-            ws = _words(s)
-            score = sum(counts[w] for w in ws) / (len(ws) + 3) if ws else 0
-            scored.append((score, i, s))
-        picks = {0}
-        rest = sorted((t for t in scored if t[1] != 0), key=lambda t: -t[0])
-        facts = [i for i, x in enumerate(sents) if i and FACT_RE.search(x)]
-        if facts:
-            picks.update(facts[:2])
-        elif rest:
-            picks.add(rest[0][1])
-        chosen = []
-        for i in sorted(picks):
-            candidate = " ".join(chosen + [sents[i]])
-            if len(candidate) <= SUMMARY_MAX or not chosen:
-                chosen.append(sents[i])
-        summary = " ".join(chosen)
+    spoken = [n for n in known_notes if not SYSTEM.match(n)]
+    texts = spoken + sents
+    summary = local_summary(person_name, texts) or third_person_summary(person_name, texts)
     if not summary:
-        summary = f"Spoke with {person_name}." if person_name else "No speech captured."
-    spoken = [n for n in known_notes if not n.lower().startswith("named from speech")]
-    if spoken:
-        prior = _sentences(re.sub(r"#\w+", "", spoken[-1]))
-        fresh = prior and prior[0].strip(" .").lower() not in summary.lower()
-        if fresh and len(summary) + len(prior[0]) + 10 <= SUMMARY_MAX:
-            summary = f"{summary} Earlier: {prior[0]}"
+        parts = []
+        if any(NAME_INTRO.match(x) for t in texts for x in _sentences(t)):
+            parts.append(introduced(person_name))
+        counts = Counter(w for t in texts for w in _words(t) if len(w) >= 6)
+        topics = [w for w, _ in counts.most_common(3)]
+        if topics:
+            parts.append("Spoke about " + ", ".join(topics) + ".")
+        summary = " ".join(parts) or (f"Spoke with {person_name}." if person_name else "No speech captured.")
     followups = [s for s in sents if ACTION_RE.search(s)]
     return merge_with_known(
         validate_result({"summary": summary, "tags": [], "followups": followups}),
