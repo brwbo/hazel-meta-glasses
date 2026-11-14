@@ -20,7 +20,7 @@ struct LensCardView: View {
         case .newFace:
             line(symbol: "person", text: LensCard.newFaceText)
         case .person(let person):
-            personView(person)
+            HazelCardView(person: person)
         }
     }
 
@@ -32,46 +32,6 @@ struct LensCardView: View {
         .font(.system(size: 24))
         .foregroundStyle(.white.opacity(0.7))
         .padding(16)
-    }
-
-    private func personView(_ person: LensPerson) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 16) {
-                if let data = person.photo, let photo = UIImage(data: data) {
-                    Image(uiImage: photo)
-                        .resizable()
-                        .aspectRatio(1, contentMode: .fill)
-                        .frame(width: 132, height: 132)
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(person.name)
-                        .font(.system(size: 40, weight: .bold))
-                        .foregroundStyle(.white)
-                    if !person.role.isEmpty {
-                        Text(person.role)
-                            .font(.system(size: 24))
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
-                }
-            }
-            if !person.summary.isEmpty {
-                Text(person.summary)
-                    .font(.system(size: 30))
-                    .foregroundStyle(.white)
-            }
-            if !person.followup.isEmpty {
-                HStack(alignment: .center, spacing: 8) {
-                    Image(systemName: "checkmark.circle")
-                    Text(person.followup)
-                }
-                .font(.system(size: 24))
-                .foregroundStyle(.white)
-            }
-        }
-        .padding(24)
-        .frame(width: CGFloat(LensCard.side), alignment: .leading)
-        .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 24))
     }
 }
 

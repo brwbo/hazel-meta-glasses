@@ -14,7 +14,11 @@ final class LensDisplay {
     }
 
     var onPhase: ((Phase) -> Void)?
+    var renderImage: ((LensPerson) -> UIImage?)?
     private(set) var sends = 0
+    private(set) var imageSends = 0
+    private(set) var lastImageBytes = 0
+    private(set) var imageFailed = false
 
     private let hub: GlassesSessionHub
     private var display: Display?
@@ -38,6 +42,7 @@ final class LensDisplay {
         guard !wanted else { return }
         wanted = true
         attempt = 0
+        imageFailed = false
         connect()
     }
 
@@ -157,23 +162,38 @@ final class LensDisplay {
             return
         }
         let outgoing = card
+        var picture: UIImage?
+        if !imageFailed, case .person(let person) = outgoing {
+            picture = renderImage?(person)
+        }
+        let view = picture.map(Self.imageView) ?? Self.view(for: outgoing)
         sending = true
         lastSendAt = now
         Task { @MainActor [weak self] in
             var failure: Error?
             do {
-                try await display.send(Self.view(for: outgoing))
+                try await display.send(view)
             } catch {
                 failure = error
             }
             guard let self, self.display === display else { return }
             self.sending = false
             if let failure {
-                self.retry((failure as? DisplayError)?.description ?? failure.localizedDescription)
+                if picture != nil, (failure as? DisplayError) != .deviceDisconnected {
+                    self.imageFailed = true
+                    self.lastSendAt = 0
+                    self.flush()
+                } else {
+                    self.retry((failure as? DisplayError)?.description ?? failure.localizedDescription)
+                }
                 return
             }
             self.lastSent = outgoing
             self.sends += 1
+            if let picture {
+                self.imageSends += 1
+                self.lastImageBytes = picture.pngData()?.count ?? 0
+            }
             self.flush()
         }
     }
@@ -186,6 +206,12 @@ final class LensDisplay {
             return line(icon: .person, text: LensCard.newFaceText)
         case .person(let person):
             return personView(person)
+        }
+    }
+
+    private static func imageView(_ picture: UIImage) -> FlexBox {
+        FlexBox(direction: .column) {
+            Image(image: picture, sizePreset: .fill, cornerRadius: .none)
         }
     }
 

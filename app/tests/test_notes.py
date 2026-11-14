@@ -319,3 +319,24 @@ def test_decode_caps_at_120_seconds(tmp_path):
         w.setframerate(16000)
         w.writeframes(b"\x10\x10" * (16000 * 130))
     assert len(notes._decode(str(p))) == 120 * 16000
+
+
+def test_fallback_summary_does_not_repeat_itself_or_quote_system_notes():
+    import notes
+    out = notes.fallback_summarise("Korky", "Hello, my name is Korky Por.", ["Hello, my name is Korky Por.", "named from speech: 'my name is Korky Por'"])
+    assert out["summary"].count("Korky Por") == 1
+    assert "named from speech" not in out["summary"]
+
+
+def test_fallback_summary_ignores_system_sentences_in_the_transcript():
+    import notes
+    out = notes.fallback_summarise("Korky", "Hello, my name is Korky Por. named from speech: 'my name is Korky Por' English Illustrator.", [])
+    assert "named from speech" not in out["summary"]
+
+
+def test_fallback_summary_keeps_facts_about_where_someone_is_from_and_what_they_do():
+    import notes
+    text = "Hello, my name is Korky. With mama's popular and biggest seller being a book. I was born in Harare Zimbabwe. I'm now living in Oxford working as an illustrator."
+    out = notes.fallback_summarise("Korky", text, [])
+    assert "born in Harare" in out["summary"]
+

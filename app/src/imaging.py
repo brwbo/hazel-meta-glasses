@@ -19,7 +19,8 @@ def square_jpeg(frame, box, side_px=256, pad=1.6):
     x0, y0, side = crop_box(frame.shape, box, pad)
     if side <= 0:
         return None
-    crop = cv2.resize(frame[y0:y0 + side, x0:x0 + side], (side_px, side_px), interpolation=cv2.INTER_AREA)
+    grow = cv2.INTER_AREA if side >= side_px else cv2.INTER_LANCZOS4
+    crop = cv2.resize(frame[y0:y0 + side, x0:x0 + side], (side_px, side_px), interpolation=grow)
     return cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 88])[1].tobytes()
 
 

@@ -11,6 +11,7 @@ import { createFlakes } from "./gl/flakes.js";
 import { createBrackets } from "./gl/brackets.js";
 import { createCardRig } from "./gl/card-rig.js";
 import { createFeed } from "./feed.js";
+import { initLibrary } from "./library.js";
 
 document.documentElement.classList.add("js");
 const params = new URLSearchParams(location.search);
@@ -243,6 +244,8 @@ function pick(trackId) {
   });
 }
 
+const library = initLibrary();
+
 function openCard() {
   rig.open({ replay: state.replay });
   state.replay = false;
@@ -385,6 +388,7 @@ async function loadPeople() {
     const list = await api.people();
     state.people = Array.isArray(list) ? list : [];
     session.setPeople(state.people.length);
+    try { library.refresh(); } catch {}
     const ids = new Set(state.people.map((p) => String(p.id)));
     try {
       for (const k of Object.keys(localStorage)) {

@@ -369,8 +369,14 @@ def merge_with_known(result, known_notes):
     return {"summary": result["summary"], "tags": [], "followups": result["followups"]}
 
 
+FACT_RE = re.compile(
+    r"\b(?:born in|i'?m from|i am from|live in|living in|based in|work(?:ing)? (?:as|at|for)|i'?m an? |i am an? |studying)\b",
+    re.I,
+)
+
+
 def fallback_summarise(person_name, transcript, known_notes):
-    sents = _sentences(transcript)
+    sents = [x for x in _sentences(transcript) if not x.lower().startswith("named from speech")]
     known_notes = [str(n) for n in (known_notes or []) if str(n).strip()]
     counts = Counter(_words(transcript))
     for note in known_notes:
@@ -384,7 +390,10 @@ def fallback_summarise(person_name, transcript, known_notes):
             scored.append((score, i, s))
         picks = {0}
         rest = sorted((t for t in scored if t[1] != 0), key=lambda t: -t[0])
-        if rest:
+        facts = [i for i, x in enumerate(sents) if i and FACT_RE.search(x)]
+        if facts:
+            picks.update(facts[:2])
+        elif rest:
             picks.add(rest[0][1])
         chosen = []
         for i in sorted(picks):
@@ -394,9 +403,11 @@ def fallback_summarise(person_name, transcript, known_notes):
         summary = " ".join(chosen)
     if not summary:
         summary = f"Spoke with {person_name}." if person_name else "No speech captured."
-    if known_notes:
-        prior = _sentences(re.sub(r"#\w+", "", known_notes[-1]))
-        if prior and len(summary) + len(prior[0]) + 10 <= SUMMARY_MAX:
+    spoken = [n for n in known_notes if not n.lower().startswith("named from speech")]
+    if spoken:
+        prior = _sentences(re.sub(r"#\w+", "", spoken[-1]))
+        fresh = prior and prior[0].strip(" .").lower() not in summary.lower()
+        if fresh and len(summary) + len(prior[0]) + 10 <= SUMMARY_MAX:
             summary = f"{summary} Earlier: {prior[0]}"
     followups = [s for s in sents if ACTION_RE.search(s)]
     return merge_with_known(

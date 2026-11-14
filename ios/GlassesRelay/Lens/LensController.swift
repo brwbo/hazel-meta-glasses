@@ -13,6 +13,7 @@ final class LensController {
     private(set) var blocker: String?
     private(set) var notice = ""
     private(set) var sends = 0
+    private(set) var styleNote = ""
 
     @ObservationIgnored private let relay: RelayController
     @ObservationIgnored private let hub: GlassesSessionHub
@@ -36,6 +37,9 @@ final class LensController {
         self.display = LensDisplay(hub: hub)
         display.onPhase = { [weak self] phase in
             self?.phaseChanged(phase)
+        }
+        display.renderImage = { person in
+            UserDefaults.standard.bool(forKey: "lensPresetOnly") ? nil : HazelCardView.render(person)
         }
         feed.onEvent = { [weak self] event in
             Task { @MainActor in self?.handle(event) }
@@ -62,6 +66,9 @@ final class LensController {
         }
         if !notice.isEmpty {
             parts.append(notice)
+        }
+        if isOn, !styleNote.isEmpty {
+            parts.append(styleNote)
         }
         return parts.joined(separator: " · ")
     }
@@ -147,6 +154,12 @@ final class LensController {
         }
         if sends != display.sends {
             sends = display.sends
+        }
+        let style = display.imageFailed
+            ? "preset style (image send failed)"
+            : display.imageSends > 0 ? "image style, last \(display.lastImageBytes / 1024) KB as PNG" : ""
+        if style != styleNote {
+            styleNote = style
         }
     }
 
