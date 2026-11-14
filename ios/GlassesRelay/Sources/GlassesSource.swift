@@ -2,7 +2,6 @@ import AVFoundation
 import CoreGraphics
 import MWDATCamera
 import MWDATCore
-import MWDATMockDevice
 import UIKit
 import VideoToolbox
 
@@ -12,36 +11,43 @@ final class GlassesSource: MediaSource {
     private let audio: AudioRelay
     private let report: @Sendable (SourceEvent) -> Void
     private let useMock: Bool
+    private let hub: GlassesSessionHub
     private let wearables = Wearables.shared
-    private let tokens = ListenerTokenBag()
     private let streamTokens = ListenerTokenBag()
     private let mic = MicCapture()
-    private var selector: AutoDeviceSelector?
     private var session: DeviceSession?
     private var camera: MWDATCamera.Camera?
     private var stopping = false
     private var streamWasActive = false
     private var usingToolkitAudio = false
 
-    init(frames: FrameRelay, audio: AudioRelay, useMock: Bool, report: @escaping @Sendable (SourceEvent) -> Void) {
+    init(
+        frames: FrameRelay,
+        audio: AudioRelay,
+        hub: GlassesSessionHub,
+        report: @escaping @Sendable (SourceEvent) -> Void
+    ) {
         self.frames = frames
         self.audio = audio
-        self.useMock = useMock
+        self.hub = hub
+        self.useMock = hub.useMock
         self.report = report
     }
 
     func start() async throws {
         stopping = false
         streamWasActive = false
-        if useMock {
-            try startMock()
-        } else if MockDeviceKit.shared.isEnabled {
-            await MockDeviceKit.shared.disable()
-        }
-        try await register()
-        let selector = AutoDeviceSelector(wearables: wearables)
-        self.selector = selector
-        try await waitForDevice(selector)
+        let report = self.report
+        let listener = GlassesSessionHub.Listener(
+            note: { report(.note($0)) },
+            error: { report(.error($0)) },
+            ended: { [weak self] text in
+                guard let self, !self.stopping else { return }
+                report(.ended(text))
+            }
+        )
+        let session = try await hub.acquire(.camera, listener: listener)
+        self.session = session
         guard try await permission(.camera) else {
             throw RelayFailure("camera permission for the glasses was not granted in Meta AI")
         }
@@ -50,39 +56,10 @@ final class GlassesSource: MediaSource {
             do {
                 toolkitAudio = try await permission(.microphone)
             } catch {
-                self.report(.error("glasses microphone permission: \(error.localizedDescription)"))
+                report(.error("glasses microphone permission: \(error.localizedDescription)"))
             }
         }
         try Task.checkCancellation()
-
-        let session = try wearables.createSession(deviceSelector: selector)
-        self.session = session
-        let states = session.stateStream()
-        let report = self.report
-        session.statePublisher.listen { [weak self] state in
-            Task { @MainActor in
-                self?.sessionChanged(state)
-            }
-        }.store(in: tokens)
-        session.errorPublisher.listen { error in
-            report(.error("glasses session: \(error.localizedDescription)"))
-        }.store(in: tokens)
-        try session.start()
-        var started = false
-        for await state in states {
-            if state == .started {
-                started = true
-                break
-            }
-            if state == .stopped {
-                break
-            }
-        }
-        try Task.checkCancellation()
-        guard started else {
-            throw RelayFailure("glasses session did not start")
-        }
-
         try await attachCamera(to: session, toolkitAudio: toolkitAudio)
     }
 
@@ -130,58 +107,12 @@ final class GlassesSource: MediaSource {
 
     func stop() {
         stopping = true
-        tokens.clear()
         streamTokens.clear()
         mic.stop()
         camera?.stop()
         camera = nil
-        session?.stop()
         session = nil
-        selector = nil
-    }
-
-    private func startMock() throws {
-        let kit = MockDeviceKit.shared
-        if !kit.isEnabled {
-            kit.enable()
-        }
-        guard kit.pairedDevices.isEmpty else { return }
-        let glasses = try kit.pairGlasses(model: .rayBanMeta)
-        glasses.powerOn()
-        glasses.unfold()
-        glasses.don()
-        if let path = UserDefaults.standard.string(forKey: "relayMockVideo") {
-            glasses.services.camera.setCameraFeed(fileURL: URL(fileURLWithPath: path))
-        } else {
-            #if !targetEnvironment(simulator)
-            glasses.services.camera.setCameraFeed(cameraFacing: .back)
-            #endif
-        }
-    }
-
-    private func register() async throws {
-        guard wearables.registrationState != .registered else { return }
-        report(.note("approve this app in Meta AI"))
-        let states = wearables.registrationStateStream()
-        do {
-            try await wearables.startRegistration()
-        } catch RegistrationError.alreadyRegistered {
-            return
-        }
-        for await state in states where state == .registered {
-            return
-        }
-        throw CancellationError()
-    }
-
-    private func waitForDevice(_ selector: AutoDeviceSelector) async throws {
-        for _ in 0..<40 {
-            if selector.activeDevice != nil {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(250))
-        }
-        throw RelayFailure("no glasses found: open them, wear them, check Developer Mode in Meta AI")
+        hub.release(.camera)
     }
 
     private func permission(_ kind: Permission) async throws -> Bool {
@@ -232,15 +163,6 @@ final class GlassesSource: MediaSource {
             } catch {
                 self.report(.ended("glasses stream: \(error.localizedDescription)"))
             }
-        }
-    }
-
-    private func sessionChanged(_ state: DeviceSessionState) {
-        guard !stopping else { return }
-        if state == .stopped {
-            report(.ended("glasses session stopped"))
-        } else if state == .paused {
-            report(.note("glasses session paused"))
         }
     }
 

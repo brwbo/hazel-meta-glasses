@@ -2,9 +2,11 @@ import base64
 import concurrent.futures
 import io
 import json
+import logging
 import os
 import re
 import threading
+import time
 import wave
 from pathlib import Path
 
@@ -12,10 +14,14 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 TIMEOUT_S = 6.0
+MAX_CONTEXT_NAMES = 5
 MAX_INLINE_BYTES = 19 * 1024 * 1024
 NAME_CONF_CAP_ADDRESSED = 0.5
 
+_disabled = False
 _engine = "local"
+_last_log = {}
+log = logging.getLogger("notes")
 _lock = threading.Lock()
 _pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="gemini")
 
@@ -40,16 +46,52 @@ def _key():
     return None
 
 
+def disable_cloud(value=True):
+    global _disabled
+    _disabled = bool(value)
+
+
+def cloud_allowed():
+    backend = os.environ.get("NOTES_STT_BACKEND", "").strip().lower()
+    return not _disabled and backend not in ("mlx", "faster-whisper", "local")
+
+
 def wanted():
-    return os.environ.get("NOTES_STT_BACKEND", "").strip().lower() == "gemini"
+    return cloud_allowed() and os.environ.get("NOTES_STT_BACKEND", "").strip().lower() in ("", "auto", "gemini", "hybrid")
 
 
 def enabled():
     return wanted() and _key() is not None
 
 
+def audio_enabled():
+    return enabled() and os.environ.get("GEMINI_AUDIO", "").strip() == "1"
+
+
+def log_fallback(source, exc):
+    now = time.time()
+    if now - _last_log.get(source, 0.0) < 60:
+        return
+    _last_log[source] = now
+    msg = " ".join(str(exc).split())[:80]
+    for secret in (_key(), os.environ.get("ANTHROPIC_API_KEY")):
+        if secret:
+            msg = msg.replace(secret, "***")
+    log.warning("%s unavailable, using local path: %s: %s", source, type(exc).__name__, msg)
+
+
+def anthropic_active():
+    if not cloud_allowed():
+        return False
+    try:
+        import notes
+    except ImportError:
+        from . import notes
+    return notes._load_env() is not None
+
+
 def model_id():
-    return os.environ.get("GEMINI_MODEL", "").strip() or "gemini-4-hydrogen"
+    return os.environ.get("GEMINI_MODEL", "").strip() or "gemini-3.5-flash-lite"
 
 
 def stt_model_id():
@@ -61,7 +103,7 @@ def mode():
 
 
 def engine():
-    return _engine
+    return "gemini" if enabled() else "local"
 
 
 def _set_engine(name):
@@ -80,8 +122,13 @@ def status():
         mlx = fw = False
     return {
         "selected": "gemini" if wanted() else "local",
+        "engine": engine(),
+        "cloud": enabled() or anthropic_active(),
         "gemini_configured": _key() is not None,
         "gemini_active": enabled(),
+        "audio_to_cloud": audio_enabled(),
+        "text_to_cloud": enabled(),
+        "hybrid": enabled() and not audio_enabled(),
         "local_mlx": mlx,
         "local_faster_whisper": fw,
         "mode": mode(),
@@ -227,13 +274,14 @@ def merge_names(model_names, rule_names):
     return sorted(merged.values(), key=lambda d: -d["confidence"])
 
 
-def _finish(transcript, data, known_notes):
+def _finish(transcript, data, known_notes, wearer=None, taken=None):
     try:
         import notes
     except ImportError:
         from . import notes
     checked = notes.validate_result({"summary": data.get("summary") or "-", "followups": data.get("followups")})
-    names = merge_names(clean_names(data.get("names")), notes.extract_names(transcript))
+    model_names = notes.filter_names(clean_names(data.get("names")), wearer, taken)
+    names = notes.filter_names(merge_names(model_names, notes.extract_names(transcript, wearer, taken)), wearer, taken)
     return {
         "transcript": transcript.strip(),
         "summary": checked["summary"],
@@ -243,10 +291,10 @@ def _finish(transcript, data, known_notes):
     }
 
 
-def _single(client, wav, person_name, known_names, known_notes):
+def _single(client, wav, person_name, known_names, known_notes, wearer=None, taken=None):
     parts = [{"type": "text", "text": RULES + "\n" + _context(person_name, known_names, known_notes)}, _audio_part(wav)]
     data = _parse(_call(client, model_id(), parts, SCHEMA), True)
-    return _finish(str(data["transcript"]), data, known_notes)
+    return _finish(str(data["transcript"]), data, known_notes, wearer, taken)
 
 
 def _new_info(transcript, known_notes):
@@ -257,7 +305,7 @@ def _new_info(transcript, known_notes):
     return len(words - old) / len(words) >= 0.25
 
 
-def _two_step(client_v1, client_beta, wav, person_name, known_names, known_notes):
+def _two_step(client_v1, client_beta, wav, person_name, known_names, known_notes, wearer=None, taken=None):
     vocab = [str(n)[:60] for n in ([person_name] if person_name else []) + list(known_names or [])][:100]
     cfg = {"transcription_config": {"custom_vocabulary": vocab}} if vocab else None
     extra = {"generation_config": cfg} if cfg else {}
@@ -273,7 +321,7 @@ def _two_step(client_v1, client_beta, wav, person_name, known_names, known_notes
         except ImportError:
             from . import notes
         base = notes.fallback_summarise(person_name, transcript, known_notes)
-        names = notes.extract_names(transcript)
+        names = notes.extract_names(transcript, wearer, taken)
         return {**base, "transcript": transcript, "tags": [], "names": names}
     parts = [
         {
@@ -283,20 +331,33 @@ def _two_step(client_v1, client_beta, wav, person_name, known_names, known_notes
         }
     ]
     data = _parse(_call(client_v1, model_id(), parts, SCHEMA_TEXT), False)
-    return _finish(transcript, data, known_notes)
+    return _finish(transcript, data, known_notes, wearer, taken)
 
 
-def process(audio, person_name, known_notes, known_names=None):
+def _recent_names(known_names, wearer):
+    seen = []
+    w = (wearer or os.environ.get("HAZEL_WEARER", "")).strip().lower()
+    for n in known_names or []:
+        n = " ".join(str(n).split())
+        if n and n.lower() != w and n.lower() not in (x.lower() for x in seen):
+            seen.append(n)
+    return seen[-MAX_CONTEXT_NAMES:]
+
+
+def process(audio, person_name, known_notes, known_names=None, wearer=None, taken=None):
     key = _key()
-    if not wanted() or not key:
+    if not audio_enabled():
         _set_engine("local")
         return None
     wav = to_wav_bytes(audio)
+    names = _recent_names(known_names, wearer)
 
     def run():
         if mode() == "two-step":
-            return _two_step(_make_client(key), _make_client(key, "v1beta"), wav, person_name, known_names, known_notes)
-        return _single(_make_client(key), wav, person_name, known_names, known_notes)
+            return _two_step(
+                _make_client(key), _make_client(key, "v1beta"), wav, person_name, names, known_notes, wearer, taken
+            )
+        return _single(_make_client(key), wav, person_name, names, known_notes, wearer, taken)
 
     try:
         future = _pool.submit(run)
@@ -305,8 +366,7 @@ def process(audio, person_name, known_notes, known_names=None):
             raise ValueError("bad result")
         _set_engine("gemini")
         return out
-    except BaseException as exc:
-        if isinstance(exc, KeyboardInterrupt):
-            raise
+    except Exception as exc:
         _set_engine("local")
+        log_fallback("gemini", exc)
         return None

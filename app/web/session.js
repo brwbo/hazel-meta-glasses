@@ -1,6 +1,6 @@
 import { h, api } from "./util.js";
 
-export function setupSession({ indicator, slot, onWiped }) {
+export function setupSession({ indicator, slot, onWiped, onInfo }) {
   let data = { roomConsent: false, text: "", autoEnrolled: 0 };
   let confirming = false;
   let peopleCount = 0;
@@ -57,6 +57,13 @@ export function setupSession({ indicator, slot, onWiped }) {
       go.disabled = true;
       try {
         await api.wipe();
+        try {
+          const left = new Set(((await api.people()) || []).map((p) => String(p.id)));
+          for (const k of Object.keys(localStorage)) {
+            const m = /^fc\.[a-z]+\.(\d+)$/.exec(k);
+            if (m && !left.has(m[1])) localStorage.removeItem(k);
+          }
+        } catch {}
         confirming = false;
         await refresh();
         onWiped();
@@ -78,6 +85,7 @@ export function setupSession({ indicator, slot, onWiped }) {
     } catch {
       data = { ...data };
     }
+    if (onInfo) onInfo(data);
     render();
   }
 
@@ -86,6 +94,9 @@ export function setupSession({ indicator, slot, onWiped }) {
     message(msg) {
       data = { ...data, roomConsent: !!msg.roomConsent, text: msg.text ?? data.text };
       if (msg.autoEnrolled != null) data.autoEnrolled = msg.autoEnrolled;
+      if (msg.stt != null) data.stt = msg.stt;
+      if (msg.cloudSpeech != null) data.cloudSpeech = msg.cloudSpeech;
+      if (onInfo) onInfo(data);
       if (!confirming) render();
     },
     setPeople(n) {

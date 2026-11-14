@@ -1,18 +1,21 @@
+import asyncio
 import importlib
 import inspect
 import logging
+import os
 import socket
 import threading
 import time
 from collections import deque
 from pathlib import Path
 
-import cv2
+os.environ.setdefault("OPENCV_IO_MAX_IMAGE_PIXELS", "40000000")
+import cv2  # noqa: E402
 import numpy as np
 from fastapi import HTTPException
 
 log = logging.getLogger("face-context")
-LIP_MIN = 0.35
+LIP_MIN = 0.25
 
 AUDIO_EXT = {".wav", ".mp3", ".m4a", ".mp4", ".webm", ".ogg", ".oga", ".aac", ".flac", ".caf"}
 AUDIO_TYPES = {"audio/wav": ".wav", "audio/x-wav": ".wav", "audio/wave": ".wav", "audio/mpeg": ".mp3",
@@ -105,8 +108,8 @@ def warm_up_notes():
 
 
 class AudioQueue:
-    def __init__(self, handler, maxlen=2):
-        self.handler, self.maxlen = handler, maxlen
+    def __init__(self, handler, maxlen=2, dedupe=False):
+        self.handler, self.maxlen, self.dedupe = handler, maxlen, dedupe
         self.items = deque()
         self.cond = threading.Condition()
         self.busy = False
@@ -128,6 +131,8 @@ class AudioQueue:
     def submit(self, job):
         with self.cond:
             dropped = 0
+            if self.dedupe:
+                self.items = deque(item for item in self.items if item[1][0] != job[0])
             while len(self.items) >= self.maxlen:
                 self.items.popleft()
                 dropped += 1
@@ -137,6 +142,13 @@ class AudioQueue:
             self.items.append((time.time(), job))
             self.cond.notify_all()
             return dropped
+
+    def purge(self, pid):
+        with self.cond:
+            before = len(self.items)
+            self.items = deque(item for item in self.items if item[1][0] != pid)
+            self.cond.notify_all()
+            return before - len(self.items)
 
     def pending(self):
         with self.cond:
@@ -185,20 +197,52 @@ def lan_ip():
 
 def speech_status():
     try:
-        engine = importlib.import_module("notes").engine
-        stt = str(engine()).lower()
+        notes = importlib.import_module("notes")
+        stt = str(notes.engine()).lower()
     except Exception:
-        return {"stt": "unknown", "cloudSpeech": False}
+        return {"stt": "unknown", "cloudSpeech": False, "audioToCloud": False}
     stt = stt if stt in ("gemini", "local") else "unknown"
-    return {"stt": stt, "cloudSpeech": stt == "gemini"}
+    try:
+        status = notes.status() if callable(getattr(notes, "status", None)) else {}
+    except Exception:
+        status = {}
+    status = status if isinstance(status, dict) else {}
+    cloud = bool(status.get("cloud", stt == "gemini"))
+    hybrid = callable(getattr(notes, "enrich", None))
+    to_cloud = status.get("audio_to_cloud", status.get("audioToCloud", cloud and not hybrid))
+    return {"stt": stt, "cloudSpeech": cloud, "audioToCloud": bool(to_cloud) and cloud}
 
 
 def speech_banner(no_cloud=False):
     if no_cloud:
         return "Speech: cloud speech OFF (--no-cloud-speech); audio stays on this machine (local model)."
     status = speech_status()
+    if status["cloudSpeech"] and not status["audioToCloud"]:
+        return ("Speech: hybrid; audio is transcribed on this machine and only transcript TEXT is sent to "
+                "Google (Gemini) for summaries and names.")
     if status["cloudSpeech"]:
         return "Speech: cloud speech ON (Gemini key present); audio chunks are sent to Google for transcription."
     if status["stt"] == "local":
         return "Speech: cloud speech off (no Gemini key); audio stays on this machine (local model)."
     return "Speech: engine unknown (notes.engine() unavailable); audio goes to whatever notes.py uses."
+
+
+class Hub:
+    def __init__(self):
+        self.clients = set()
+
+    def add(self):
+        q = asyncio.Queue(maxsize=32)
+        self.clients.add(q)
+        return q
+
+    def remove(self, q):
+        self.clients.discard(q)
+
+    def broadcast(self, msg):
+        for q in list(self.clients):
+            try:
+                q.put_nowait(msg)
+            except asyncio.QueueFull:
+                q.get_nowait()
+                q.put_nowait(msg)

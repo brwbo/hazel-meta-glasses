@@ -27,13 +27,25 @@ struct ServerAddress: Equatable {
 
     var framesURL: URL? { url(scheme: "ws", path: "/ingest") }
     var audioURL: URL? { url(scheme: "http", path: "/api/ingest/audio") }
+    var eventsURL: URL? { url(scheme: "ws", path: "/ws") }
 
-    private func url(scheme: String, path: String) -> URL? {
+    func personURL(_ id: Int) -> URL? {
+        url(scheme: "http", path: "/api/people/\(id)")
+    }
+
+    func resourceURL(_ reference: String) -> URL? {
+        guard reference.hasPrefix("/"), !reference.hasPrefix("//") else { return nil }
+        let parts = reference.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        return url(scheme: "http", path: String(parts[0]), query: parts.count > 1 ? String(parts[1]) : nil)
+    }
+
+    private func url(scheme: String, path: String, query: String? = nil) -> URL? {
         var components = URLComponents()
         components.scheme = scheme
         components.host = host
         components.port = port
         components.path = path
+        components.percentEncodedQuery = query
         return components.url
     }
 }

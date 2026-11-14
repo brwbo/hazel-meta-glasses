@@ -139,14 +139,14 @@ def test_speech_status_and_banner(monkeypatch):
     import types
     import media
     monkeypatch.setitem(sys.modules, "notes", types.SimpleNamespace(engine=lambda: "gemini"))
-    assert media.speech_status() == {"stt": "gemini", "cloudSpeech": True}
+    assert media.speech_status() == {"stt": "gemini", "cloudSpeech": True, "audioToCloud": True}
     assert "sent to Google" in media.speech_banner()
     assert "stays on this machine" in media.speech_banner(no_cloud=True)
     monkeypatch.setitem(sys.modules, "notes", types.SimpleNamespace(engine=lambda: "local"))
-    assert media.speech_status() == {"stt": "local", "cloudSpeech": False}
+    assert media.speech_status() == {"stt": "local", "cloudSpeech": False, "audioToCloud": False}
     assert "stays on this machine" in media.speech_banner()
     monkeypatch.setitem(sys.modules, "notes", types.SimpleNamespace())
-    assert media.speech_status() == {"stt": "unknown", "cloudSpeech": False}
+    assert media.speech_status() == {"stt": "unknown", "cloudSpeech": False, "audioToCloud": False}
     monkeypatch.setitem(sys.modules, "notes", types.SimpleNamespace(engine=lambda: 1 / 0))
     assert media.speech_status()["stt"] == "unknown"
 

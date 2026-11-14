@@ -207,3 +207,16 @@ def test_clarity_rejects_implausible_landmarks_and_dark_faces():
     dark = (frame // 8).astype(np.uint8)
     assert not sources.clarity(dark, row, emb(7), emb(7))[1]
     assert not sources.clarity(frame, row, emb(7), None)[1]
+
+
+def test_small_faces_next_to_a_clear_one_are_dropped():
+    big = np.array([0, 0, 155, 160], dtype=np.float32)
+    far = np.array([0, 0, 44, 48], dtype=np.float32)
+    assert sources.drop_small_faces([big, far], 640) == [big]
+
+
+def test_two_similar_faces_are_both_kept_and_a_lone_tiny_one_is_not():
+    a = np.array([0, 0, 60, 64], dtype=np.float32)
+    b = np.array([0, 0, 55, 58], dtype=np.float32)
+    assert len(sources.drop_small_faces([a, b], 854)) == 2
+    assert sources.drop_small_faces([np.array([0, 0, 30, 32], dtype=np.float32)], 854) == []

@@ -1,4 +1,4 @@
-import { h, api } from "../util.js";
+import { h, api, reducedMotion } from "../util.js";
 import { setupSession } from "../session.js";
 import { startMic } from "../mic.js";
 import { cropFace } from "../crop.js";
@@ -10,12 +10,13 @@ import { createWorld } from "./gl/world.js";
 import { createFlakes } from "./gl/flakes.js";
 import { createBrackets } from "./gl/brackets.js";
 import { createCardRig } from "./gl/card-rig.js";
+import { createFeed } from "./feed.js";
 
 document.documentElement.classList.add("js");
 const params = new URLSearchParams(location.search);
 let mock = null;
 if (params.get("mock") === "1") {
-  mock = (await import("../mock.js")).installMock({ lost: params.has("lost"), empty: params.has("empty"), room: params.has("room"), faces: Number(params.get("faces")) || 0, mouth: params.get("mouth"), talk: params.get("talk") });
+  mock = (await import("../mock.js")).installMock({ lost: params.has("lost"), empty: params.has("empty"), room: params.has("room"), faces: Number(params.get("faces")) || 0, mouth: params.get("mouth"), talk: params.get("talk"), stt: params.get("stt") });
 }
 
 const $ = (id) => document.getElementById(id);
@@ -34,12 +35,14 @@ const overlay = new CreamOverlay({ stage, layer: $("faces"), onPick: pick, onMis
 await Promise.all(["600 15px 'Hanken Grotesk'", "400 16px 'Hanken Grotesk'", "400 28px 'Young Serif'", "500 26px Caveat"].map((f) => document.fonts.load(f).catch(() => null)));
 const world = createWorld({ canvas: $("gl"), layer: $("css3d") });
 const flakes = createFlakes(world.scene);
-const brackets = createBrackets({ world, overlay, flakes });
+const bracketFlakes = new Proxy(flakes, { get: (t, k) => (k === "scatter" && reducedMotion() ? () => {} : typeof t[k] === "function" ? t[k].bind(t) : t[k]) });
+const brackets = createBrackets({ world, overlay, flakes: bracketFlakes });
 const rig = createCardRig({ world, flakes, wrapper: $("card3d"), card });
 window.__cream = { world, flakes };
 const session = setupSession({
   indicator: $("session-dot"),
   slot: $("session-pop"),
+  onInfo: showStt,
   onWiped: () => {
     clearSel();
     loadPeople();
@@ -47,14 +50,37 @@ const session = setupSession({
 });
 $("card-close").addEventListener("click", () => clearSel());
 
-let feed = null;
-if (mock) {
-  $("media").append(mock.video);
-} else {
-  feed = h("img", { src: "/video.mjpg", alt: "Live camera feed", decoding: "async" });
-  feed.addEventListener("error", () => setConn("lost"));
-  $("media").append(feed);
+function showStt(info) {
+  let chip = $("stt");
+  if (!chip) {
+    chip = h("span", { id: "stt", class: "stt-chip", hidden: true, tabindex: 0 });
+    Object.assign(chip.style, { fontSize: "var(--text-xs, 12px)", fontWeight: "600", color: "var(--color-muted)", paddingLeft: "8px", marginLeft: "2px", borderLeft: "1px solid currentColor", lineHeight: "1", whiteSpace: "nowrap", cursor: "help" });
+    live.append(chip);
+  }
+  if (!info) return;
+  const where = info.stt === "gemini" || info.cloudSpeech === true ? "cloud" : info.stt === "local" || info.cloudSpeech === false ? "local" : null;
+  chip.hidden = !where;
+  if (!where) return;
+  chip.textContent = `speech: ${where}`;
+  chip.setAttribute("aria-label", `Speech is transcribed ${where === "cloud" ? "in the cloud" : "on this machine"}`);
+  placeCorner();
+  chip.title = where === "cloud"
+    ? "Short clips of speech from the person in view are sent to a cloud speech service (Gemini) to be transcribed. Video stays on this device."
+    : "Speech is transcribed on this machine. Audio does not leave it.";
 }
+
+function placeCorner() {
+  const corner = document.querySelector(".corner");
+  if (!corner) return;
+  corner.style.left = `${Math.round(live.getBoundingClientRect().right + 8)}px`;
+}
+addEventListener("resize", placeCorner);
+
+const feedCtl = createFeed({ mock, media: $("media"), onLost: () => setConn("lost") });
+const feed = feedCtl.el;
+const reloadFeed = feedCtl.reload;
+const feedHealthy = feedCtl.healthy;
+const checkFeed = feedCtl.check;
 
 function setConn(next) {
   if (state.conn === next) return;
@@ -104,7 +130,10 @@ function connect() {
     return scheduleRetry();
   }
   state.ws = ws;
-  ws.onopen = () => { state.retry = 0; };
+  ws.onopen = () => {
+    clearTimeout(state.stableTimer);
+    state.stableTimer = setTimeout(() => { if (state.ws === ws && ws.readyState === 1) state.retry = 0; }, 5000);
+  };
   ws.onmessage = (e) => {
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
@@ -113,13 +142,14 @@ function connect() {
     else if (msg.type === "session") session.message(msg);
   };
   ws.onclose = () => {
+    clearTimeout(state.stableTimer);
     setConn("lost");
     scheduleRetry();
   };
 }
 
 function scheduleRetry() {
-  const wait = Math.min(8000, 1000 * 2 ** state.retry);
+  const wait = Math.min(15000, 1000 * 2 ** state.retry);
   state.retry += 1;
   state.retryAt = Date.now() + wait;
   clearTimeout(state.retryTimer);
@@ -127,8 +157,11 @@ function scheduleRetry() {
 }
 
 function reconnect(manual) {
-  if (manual) state.retry = 0;
-  if (feed) feed.src = `/video.mjpg?t=${Date.now()}`;
+  if (manual) {
+    state.retry = 0;
+    feedCtl.resetBackoff();
+  }
+  reloadFeed();
   setConn("connecting");
   connect();
 }
@@ -139,7 +172,7 @@ function onDetections(msg) {
   state.faces = (msg.faces || []).length;
   if (state.faces) state.noFacesSince = 0;
   else if (!state.noFacesSince) state.noFacesSince = performance.now();
-  setConn(msg.live === false ? "lost" : "live");
+  setConn(msg.live === false || !feedHealthy(performance.now()) ? "lost" : "live");
   renderStageMsg();
   watchNames(msg.faces || []);
   if (mic) mic.sample(msg.faces || []);
@@ -203,7 +236,11 @@ function pick(trackId) {
   state.sel = { trackId, personId: f.personId, lostAt: null, faded: false, pendingAt: performance.now(), slow: false };
   overlay.selected = trackId;
   state.replay = true;
+  state.returnTo = trackId;
   showCard();
+  requestAnimationFrame(() => {
+    if (!card.hidden && !card.contains(document.activeElement)) $("card-close").focus({ preventScroll: true });
+  });
 }
 
 function openCard() {
@@ -216,10 +253,14 @@ function closeCard() {
 }
 
 function clearSel() {
+  const back = state.returnTo;
+  const hadFocus = card.contains(document.activeElement);
   state.sel = null;
   state.cardCtx = null;
+  state.returnTo = null;
   overlay.selected = null;
   closeCard();
+  if (hadFocus && back != null && overlay.has(back)) overlay.focus(back);
 }
 
 async function showCard(quiet) {
@@ -344,6 +385,13 @@ async function loadPeople() {
     const list = await api.people();
     state.people = Array.isArray(list) ? list : [];
     session.setPeople(state.people.length);
+    const ids = new Set(state.people.map((p) => String(p.id)));
+    try {
+      for (const k of Object.keys(localStorage)) {
+        const m = /^fc\.[a-z]+\.(\d+)$/.exec(k);
+        if (m && !ids.has(m[1])) localStorage.removeItem(k);
+      }
+    } catch {}
   } catch {
     state.people = state.people || [];
   }
@@ -404,6 +452,8 @@ function frame(now) {
   world.render(dt);
   updateCardStatus(false);
   updateLiveThumb(now);
+  checkFeed(now);
+  if (state.conn === "live" && !feedHealthy(now)) setConn("lost");
   if (state.conn === "live" && now - state.lastDetAt > 3000) {
     setConn("lost");
     scheduleRetry();

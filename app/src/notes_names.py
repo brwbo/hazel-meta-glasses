@@ -98,6 +98,8 @@ NAMES_PROMPT = (
 def _confirm_with_model(candidates, transcript):
     import notes
 
+    if not notes._gemini().cloud_allowed():
+        return None
     key = notes._load_env()
     if not key:
         return None
@@ -128,11 +130,30 @@ def _confirm_with_model(candidates, transcript):
     return None
 
 
-def extract_names(transcript):
-    found = rule_extract(transcript)
+def _matches(name, other):
+    a, b = name.lower().split(), str(other).lower().split()
+    if not a or not b:
+        return False
+    return a == b or (len(a) == 1 and a[0] == b[0]) or (len(b) == 1 and b[0] == a[0])
+
+
+def filter_names(names, wearer=None, taken=None):
+    wearer = (wearer or os.environ.get("HAZEL_WEARER", "")).strip()
+    out = []
+    for c in names:
+        if wearer and _matches(c["name"], wearer):
+            continue
+        if any(_matches(c["name"], t) for t in (taken or [])):
+            c = {**c, "confidence": min(c["confidence"], 0.5)}
+        out.append(c)
+    return sorted(out, key=lambda d: -d["confidence"])
+
+
+def extract_names(transcript, wearer=None, taken=None, confirm=True):
+    found = filter_names(rule_extract(transcript), wearer, taken)
     if not found:
         return found
-    confirmed = _confirm_with_model(found, transcript)
+    confirmed = _confirm_with_model(found, transcript) if confirm else None
     if confirmed is None:
         return found
     out = []

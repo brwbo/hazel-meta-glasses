@@ -19,7 +19,7 @@ GLB = b"glTF" + (2).to_bytes(4, "little") + (20).to_bytes(4, "little") + b"\x00"
 
 
 def core(d):
-    return {k: v for k, v in d.items() if k not in ("stt", "cloudSpeech")}
+    return {k: v for k, v in d.items() if k not in ("stt", "cloudSpeech", "audioToCloud")}
 
 
 def talk(client, url, **kw):
@@ -493,4 +493,4 @@ def test_hotwords_and_warm_up(tmp_path, monkeypatch):
             time.sleep(0.02)
         assert seen.get("warm") is True
         body = talk(client, f"/api/people/{pid}/conversation", files={"file": ("a.wav", b"RIFF", "audio/wav")})
-        assert seen["hot"] == ["Sam"] and body["tags"] == []
+        assert seen["hot"] == [] and body["tags"] == []

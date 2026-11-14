@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var relay: RelayController
+    let lens: LensController
+    let hub: GlassesSessionHub
 
     var body: some View {
         NavigationStack {
@@ -24,10 +26,8 @@ struct ContentView: View {
                     .pickerStyle(.segmented)
                     .disabled(relay.isRunning)
                     #if DEBUG
-                    if relay.source == .glasses {
-                        Toggle("Use mock glasses", isOn: $relay.useMockGlasses)
-                            .disabled(relay.isRunning)
-                    }
+                    Toggle("Use mock glasses", isOn: $relay.useMockGlasses)
+                        .disabled(relay.isRunning || lens.isOn)
                     #endif
                 }
                 Section {
@@ -39,6 +39,19 @@ struct ContentView: View {
                         relay.stop()
                     }
                     .disabled(!relay.isRunning)
+                }
+                Section {
+                    Toggle("Lens card", isOn: Binding(get: { lens.isOn }, set: { lens.setOn($0) }))
+                        .disabled(lens.blocker != nil && !lens.isOn)
+                    NavigationLink("Lens preview") {
+                        LensPreviewView(lens: lens, hub: hub)
+                    }
+                    Text(lens.blocker ?? lens.statusLine)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("lensStatus")
+                } header: {
+                    Text("Lens")
                 }
                 Section("Status") {
                     Text(relay.statusLine)

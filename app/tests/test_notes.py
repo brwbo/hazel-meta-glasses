@@ -13,8 +13,13 @@ import notes
 
 @pytest.fixture(autouse=True)
 def no_key(monkeypatch):
+    import notes_gemini
+
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("NOTES_STT_BACKEND", raising=False)
     monkeypatch.setattr(notes, "ROOT", Path("/nonexistent-dir"))
+    monkeypatch.setattr(notes_gemini, "ROOT", Path("/nonexistent-dir"))
 
 
 TEXT = (
@@ -302,3 +307,15 @@ def test_process_audio_old_and_new_signature(monkeypatch):
     monkeypatch.setattr(notes, "transcribe", lambda p, **kw: seen.append(kw) or [{"start": 0, "end": 1, "text": "Hello."}])
     notes.process_audio("x", "Sam", [], hotwords=["Priya"])
     assert seen[0]["hotwords"] == ["Priya"]
+
+
+def test_decode_caps_at_120_seconds(tmp_path):
+    import wave
+
+    p = tmp_path / "long.wav"
+    with wave.open(str(p), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x10\x10" * (16000 * 130))
+    assert len(notes._decode(str(p))) == 120 * 16000

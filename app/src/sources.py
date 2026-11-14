@@ -2,8 +2,9 @@ import logging
 import threading
 import time
 
-import cv2
-import numpy as np
+from imaging import cosine, crop_box as _crop_box, iou, landmarks_plausible, square_jpeg, video_jpeg
+import cv2  # noqa: E402
+import numpy as np  # noqa: E402
 
 log = logging.getLogger("face-context")
 MAX_FRAME = 1024 * 1024
@@ -24,6 +25,8 @@ ENROL_MIN_SCORE = 0.7
 MAX_YAW_OFFSET = 0.4
 MIN_EYE_RATIO = 0.2
 MIN_SHARP = 12.0
+MIN_FACE_FRAC = 0.05
+MIN_FACE_REL = 0.35
 SHARP_SIZE = 112
 REFINE_MATCH = 0.5
 EMB_KEEP = 3
@@ -38,35 +41,18 @@ CLEAR_BETTER = 1.2
 CLEAR_INTERVAL = 5.0
 THUMB_SIDE = 256
 THUMB_PAD = 1.6
+VIDEO_MAX_WIDTH = 960
+REFINE_MARGIN = 0.1
+SCORE_DECAY = 0.7
+FORCE_SWITCH_FRAMES = 5
 
 
 def crop_box(shape, box):
-    fh, fw = shape[:2]
-    x, y, w, h = [float(v) for v in box]
-    side = int(min(max(w, h) * THUMB_PAD, fw, fh))
-    cx, cy = x + w / 2, y + h / 2 - 0.1 * h
-    x0 = int(min(max(0, cx - side / 2), fw - side))
-    y0 = int(min(max(0, cy - side / 2), fh - side))
-    return x0, y0, side
+    return _crop_box(shape, box, THUMB_PAD)
 
 
 def thumb_jpeg(frame, box):
-    x0, y0, side = crop_box(frame.shape, box)
-    if side <= 0:
-        return None
-    crop = cv2.resize(frame[y0:y0 + side, x0:x0 + side], (THUMB_SIDE, THUMB_SIDE), interpolation=cv2.INTER_AREA)
-    return cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 88])[1].tobytes()
-
-
-def landmarks_plausible(f):
-    x, y, w, h = [float(v) for v in f[:4]]
-    rex, rey, lex, ley, nx, ny, rmx, rmy, lmx, lmy = (float(v) for v in f[4:14])
-    inside = all(x <= px <= x + w and y <= py <= y + h for px, py in
-                 ((rex, rey), (lex, ley), (nx, ny), (rmx, rmy), (lmx, lmy)))
-    eye_y, mouth_y = (rey + ley) / 2, (rmy + lmy) / 2
-    eye_w, mouth_w = abs(lex - rex), abs(lmx - rmx)
-    return (inside and eye_y < ny < mouth_y and eye_y < y + 0.65 * h and mouth_y > y + 0.5 * h
-            and eye_w > 0 and 0.4 <= mouth_w / eye_w <= 1.6)
+    return square_jpeg(frame, box, THUMB_SIDE, THUMB_PAD)
 
 
 def clarity(frame, f, emb=None, ref=None):
@@ -109,11 +95,27 @@ def face_quality(frame, f, scale=1.0):
     return sharp * frontal, ok
 
 
-def cosine(a, b):
-    if a is None or b is None:
-        return 0.0
-    d = float(np.linalg.norm(a) * np.linalg.norm(b))
-    return float(np.dot(a, b) / d) if d else 0.0
+def drop_small_faces(rows, frame_w):
+    if not rows:
+        return rows
+    sizes = [min(float(r[2]), float(r[3])) for r in rows]
+    floor = max(MIN_FACE_FRAC * frame_w, MIN_FACE_REL * max(sizes))
+    return [r for r, s in zip(rows, sizes) if s >= floor]
+
+
+def assign_matches(ranked_lists, threshold=0.363):
+    pairs = sorted(((r[2], di, r) for di, ranked in enumerate(ranked_lists) for r in ranked if r[2] >= threshold),
+                   key=lambda p: -p[0])
+    matches, taken = [None] * len(ranked_lists), set()
+    for _, di, r in pairs:
+        if matches[di] is None and r[0] not in taken:
+            matches[di] = r
+            taken.add(r[0])
+    margins = []
+    for m, ranked in zip(matches, ranked_lists):
+        others = [r[2] for r in ranked if m is None or r[0] != m[0]]
+        margins.append((m[2] - max(others)) if m and others else (1.0 if m else 0.0))
+    return matches, margins
 
 
 class RoomConsent:
@@ -180,6 +182,8 @@ class Tracker:
                 for t in self.tracks if now - t["seen"] <= self.coast]
 
     def _identity(self, t, match):
+        if t["pid"] is not None and (match is None or match[0] != t["pid"]):
+            t["score"] *= SCORE_DECAY
         if match is None:
             t["cand"] = None
             return
@@ -193,7 +197,7 @@ class Tracker:
             cand[1] = score
         else:
             cand = t["cand"] = [pid, score, 1, name]
-        if cand[2] >= self.switch_frames and cand[1] > t["score"] + self.switch_margin:
+        if cand[2] >= FORCE_SWITCH_FRAMES or (cand[2] >= self.switch_frames and cand[1] > t["score"] + self.switch_margin):
             t["pid"], t["score"], t["name"], t["cand"] = pid, cand[1], cand[3], None
 
     def _observe(self, t, d, di, now, restore=False):
@@ -278,21 +282,13 @@ class Tracker:
         return self.snapshot(now)
 
 
-def iou(a, b):
-    ax, ay, aw, ah = a
-    bx, by, bw, bh = b
-    ix = max(0.0, min(ax + aw, bx + bw) - max(ax, bx))
-    iy = max(0.0, min(ay + ah, by + bh) - max(ay, by))
-    inter = ix * iy
-    union = aw * ah + bw * bh - inter
-    return inter / union if union > 0 else 0.0
-
-
 class LiveSource:
     def __init__(self, store, faces=None, rate=12.0, room=None):
         self.store, self.rate, self.room = store, rate, room
         self._faces = faces
         self.faces_lock = threading.Lock()
+        self.jpeg_lock = threading.Lock()
+        self._raw = None
         self.frame, self._jpeg, self.frame_ts = None, None, 0.0
         self.tracker = Tracker()
         self.track_lock = threading.Lock()
@@ -312,10 +308,8 @@ class LiveSource:
         return self._faces
 
     def _set_frame(self, frame, jpeg=None):
-        if jpeg is None:
-            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-            jpeg = buf.tobytes() if ok else None
-        self.frame, self._jpeg, self.frame_ts = frame, jpeg, time.time()
+        with self.jpeg_lock:
+            self.frame, self._raw, self._jpeg, self.frame_ts = frame, jpeg, None, time.time()
         self._count += 1
         if self.frame_ts - self._fps_t >= 1.0:
             self._fps = self._count / (self.frame_ts - self._fps_t)
@@ -325,7 +319,11 @@ class LiveSource:
         return self.frame is not None and time.time() - self.frame_ts < STALE_AFTER
 
     def jpeg(self):
-        return self._jpeg
+        with self.jpeg_lock:
+            if self._jpeg is None and self.frame is not None:
+                small = self._raw is not None and self.frame.shape[1] <= VIDEO_MAX_WIDTH
+                self._jpeg = self._raw if small else video_jpeg(self.frame, VIDEO_MAX_WIDTH)
+            return self._jpeg
 
     def _find(self, frame):
         h, w = frame.shape[:2]
@@ -336,7 +334,7 @@ class LiveSource:
             full = np.array(f, dtype=np.float32).copy()
             full[:14] /= s
             rows.append(full)
-        return rows, s
+        return drop_small_faces(rows, w), s
 
     def _refine(self, pid, f, emb, frame, now, refine_emb):
         score, clear = clarity(frame, f, emb, self.store.embedding(pid))
@@ -351,11 +349,12 @@ class LiveSource:
                 self.store.add_snapshot(pid, jpeg, score, now, clear=clear)
         if not (take and clear and refine_emb):
             return
-        keep = sorted(self._embs.get(pid, []) + [(score, np.asarray(emb, np.float32).ravel())], key=lambda e: -e[0])
-        self._embs[pid] = keep[:EMB_KEEP]
-        if len(self._embs[pid]) > 1:
-            vecs = [e / (np.linalg.norm(e) or 1.0) for _, e in self._embs[pid]]
-            self.store.set_embedding(pid, np.mean(vecs, axis=0))
+        with self.track_lock:
+            keep = sorted(self._embs.get(pid, []) + [(score, np.asarray(emb, np.float32).ravel())],
+                          key=lambda e: -e[0])[:EMB_KEEP]
+            self._embs[pid] = keep
+        if len(keep) > 1:
+            self.store.set_embedding(pid, np.mean([e / (np.linalg.norm(e) or 1.0) for _, e in keep], axis=0))
 
     def detect_once(self, now=None):
         frame, now = self.frame, time.time() if now is None else now
@@ -363,13 +362,13 @@ class LiveSource:
         if frame is not None and self.live():
             with self.faces_lock:
                 rows, s = self._find(frame)
-                for f in rows:
-                    emb = self.faces.embed(frame, f)
-                    match = self.store.match(emb)
+                embs = [self.faces.embed(frame, f) for f in rows]
+                matches, margins = assign_matches([self.store.ranked(e) for e in embs])
+                for f, emb, match, margin in zip(rows, embs, matches, margins):
                     q, ok = face_quality(frame, f, s)
                     if match:
                         self.store.seen(match[0], now)
-                        self._refine(match[0], f, emb, frame, now, match[2] >= REFINE_MATCH)
+                        self._refine(match[0], f, emb, frame, now, match[2] >= REFINE_MATCH and margin >= REFINE_MARGIN)
                     dets.append({"box": [float(v) for v in f[:4]], "match": match, "score": float(f[14]),
                                  "good": self.room is not None and match is None and ok, "emb": emb, "q": q,
                                  "row": f})
@@ -426,8 +425,8 @@ class LiveSource:
         pass
 
     def forgot(self, pid):
-        self._embs.pop(pid, None)
         with self.track_lock:
+            self._embs.pop(pid, None)
             self.tracker.forget(pid)
 
     def renamed(self, pid, name):

@@ -15,16 +15,17 @@ from fastapi import FastAPI, HTTPException, Path as P, Request, WebSocket, WebSo
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from typing import Annotated
-
-from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 SRC = Path(__file__).resolve().parent
 ROOT = SRC.parent
 sys.path.insert(0, str(SRC))
-from media import (AudioQueue, audio_suffix, call_process, first_upload, image_to_jpeg, lip_gate,  # noqa: E402
+os.environ.setdefault("OPENCV_IO_MAX_IMAGE_PIXELS", "40000000")
+from media import (Hub, audio_suffix, first_upload, image_to_jpeg, lip_gate,  # noqa: E402
                    lan_ip, read_body, speech_banner, speech_status, warm_up_notes)
+from schemas import Enrol, NoteIn, PersonPatch  # noqa: E402
+from security import Guard, default_hosts  # noqa: E402
+from speech import Speech  # noqa: E402
 from sources import CameraSource, IngestSource, RoomConsent  # noqa: E402
 from store import ConsentRequired, Store  # noqa: E402
 
@@ -39,46 +40,8 @@ AUTO_TEXT = "auto-captured in a test session; operator presumed consent; individ
 PersonId = P(ge=1, le=2**31 - 1)
 
 
-class Hub:
-    def __init__(self):
-        self.clients = set()
-
-    def add(self):
-        q = asyncio.Queue(maxsize=32)
-        self.clients.add(q)
-        return q
-
-    def remove(self, q):
-        self.clients.discard(q)
-
-    def broadcast(self, msg):
-        for q in list(self.clients):
-            try:
-                q.put_nowait(msg)
-            except asyncio.QueueFull:
-                q.get_nowait()
-                q.put_nowait(msg)
-
-
-class Enrol(BaseModel):
-    name: str = Field(min_length=1, max_length=80)
-    consent: str = Field(min_length=1, max_length=500)
-    role: str = Field(default="", max_length=120)
-
-
-class PersonPatch(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=80)
-    role: str | None = Field(default=None, max_length=120)
-    summary: str | None = Field(default=None, max_length=2000)
-    tags: list[Annotated[str, Field(max_length=40)]] | None = Field(default=None, max_length=12)
-    followups: list[Annotated[str, Field(max_length=300)]] | None = Field(default=None, max_length=12)
-
-
-class NoteIn(BaseModel):
-    text: str = Field(min_length=1, max_length=4000)
-
-
-def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room=None, warm_notes=False):
+def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room=None, warm_notes=False,
+               hosts=None, wearer=None):
     data_dir = Path(data_dir)
     model_dir = data_dir / "models"
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -107,17 +70,18 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
     async def lifespan(app):
         source.start()
         app.state.loop = asyncio.get_running_loop()
-        audio.start()
+        pipeline.start()
         if warm_notes:
             threading.Thread(target=warm_up_notes, daemon=True).start()
         task = asyncio.create_task(pump())
         yield
         task.cancel()
-        audio.stop()
+        pipeline.stop()
         source.stop()
 
     app = FastAPI(title="face-context", lifespan=lifespan)
     app.state.hub, app.state.source, app.state.store = hub, source, store
+    app.add_middleware(Guard, hosts=hosts or default_hosts(lan_ip()))
 
     @app.exception_handler(RequestValidationError)
     async def bad_request(request, exc):
@@ -156,7 +120,7 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
         data = store.thumb(pid)
         if not data:
             raise HTTPException(404, "no thumbnail")
-        return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+        return Response(data, media_type="image/jpeg")
 
     @app.get("/api/people/{pid}/snapshots")
     def snapshots(pid: int = PersonId):
@@ -180,7 +144,7 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
         else:
             data = await read_body(request, MAX_IMAGE)
         try:
-            store.set_pinned(pid, image_to_jpeg(data))
+            store.set_pinned(pid, await run_in_threadpool(image_to_jpeg, data))
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         return {"thumbUrl": f"/api/people/{pid}/thumb.jpg?v={int(time.time() * 1000)}"}
@@ -200,6 +164,8 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
             raise HTTPException(400, "consent text is required")
         try:
             emb, thumb_jpeg = source.capture_face()
+            if existing := store.match(emb):
+                return JSONResponse({"detail": "this face is already enrolled", "id": existing[0]}, 409)
             pid = store.enrol(name, emb, consent, body.role.strip(), thumb_jpeg)
         except (ValueError, ConsentRequired) as exc:
             raise HTTPException(400, str(exc))
@@ -240,45 +206,15 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
         p = person_or_404(pid)
         if not p["modelPath"] or not Path(p["modelPath"]).is_file():
             raise HTTPException(404, "no model")
-        return FileResponse(p["modelPath"], media_type="model/gltf-binary", headers={"Cache-Control": "no-cache"})
+        return FileResponse(p["modelPath"], media_type="model/gltf-binary")
 
     def emit(msg):
         loop = getattr(app.state, "loop", None)
         if loop is not None and not loop.is_closed():
             loop.call_soon_threadsafe(hub.broadcast, msg)
 
-    def process_chunk(job):
-        pid, suffix, data, lip = job
-        person = store.get_person(pid)
-        if person is None:
-            return
-        notes_mod = importlib.import_module("notes")
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-            tmp.write(data)
-        try:
-            known = [text for _, text in store.notes(pid)]
-            hot = [p["name"] for p in store.list_people() if p["nameSource"] != "placeholder"]
-            result = call_process(notes_mod.process_audio, tmp.name, person["name"], known, hot, lip)
-        finally:
-            Path(tmp.name).unlink(missing_ok=True)
-        if not isinstance(result, dict) or not store.exists(pid):
-            return
-        transcript = str(result.get("transcript") or "").strip()[:20000]
-        if transcript:
-            emit({"type": "transcript", "personId": pid, "text": transcript, "ts": store.add_note(pid, transcript)})
-            extract = getattr(notes_mod, "extract_names", None)
-            try:
-                candidates = extract(transcript) if callable(extract) else []
-            except Exception as exc:
-                log.warning("name extraction failed: %s", type(exc).__name__)
-                candidates = []
-            if named := store.name_from_speech(pid, candidates):
-                source.renamed(pid, named)
-        summary, followups = result.get("summary"), result.get("followups")
-        store.update_profile(pid, summary=summary if isinstance(summary, str) and summary.strip() else None,
-                             followups=followups if isinstance(followups, list) else None)
-
-    audio = app.state.audio = AudioQueue(process_chunk, maxlen=2)
+    pipeline = app.state.speech = Speech(store, source, emit, wearer)
+    app.state.audio = pipeline.audio
 
     def queue_audio(pid, suffix, data, lip=None):
         if reason := lip_gate(lip, pid):
@@ -287,7 +223,7 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
             importlib.import_module("notes").process_audio
         except Exception:
             raise HTTPException(503, "notes pipeline unavailable: src/notes.py is missing or failed to import")
-        dropped = audio.submit((pid, suffix, data, lip))
+        dropped = pipeline.audio.submit((pid, suffix, data, lip))
         return JSONResponse({"queued": True, "personId": pid, "dropped": dropped}, 202)
 
     @app.post("/api/people/{pid}/conversation")
@@ -345,6 +281,7 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
             (model_dir / f"{pid}.glb").unlink(missing_ok=True)
             if model_path:
                 Path(model_path).unlink(missing_ok=True)
+            pipeline.purge(pid)
             source.forgot(pid)
         return Response(status_code=204)
 
@@ -355,6 +292,7 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
         (model_dir / f"{pid}.glb").unlink(missing_ok=True)
         if model_path:
             Path(model_path).unlink(missing_ok=True)
+        pipeline.purge(pid)
         source.forgot(pid)
         return Response(status_code=204)
 
@@ -367,7 +305,7 @@ def create_app(store, source, data_dir, web_dir=ROOT / "web", ingest=False, room
                 if jpeg is not None and jpeg is not last:
                     last = jpeg
                     yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpeg)).encode() + b"\r\n\r\n" + jpeg + b"\r\n"
-                await asyncio.sleep(1 / 30)
+                await asyncio.sleep(1 / 15)
         return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame",
                                  headers={"Cache-Control": "no-store"})
 
@@ -430,14 +368,18 @@ def main(argv=None):
     p.add_argument("--camera", type=int, default=0)
     p.add_argument("--db", default="memory.db")
     p.add_argument("--data", default=str(ROOT / "data"))
-    p.add_argument("--host", default="0.0.0.0")
+    p.add_argument("--host", default=None, help="bind address (default 127.0.0.1, or 0.0.0.0 with --lan)")
+    p.add_argument("--lan", action="store_true", help="listen on the local network (needed for the iPhone)")
     p.add_argument("--port", type=int, default=8800)
     p.add_argument("--room-consent", default=None, metavar="TEXT",
                    help="override the stored consent text, e.g. who actually agreed")
     p.add_argument("--no-auto-enrol", action="store_true", help="turn off automatic enrolment (on by default)")
     p.add_argument("--keep", action="store_true", help="with --room-consent, keep the DB instead of an ephemeral one")
-    p.add_argument("--no-cloud-speech", action="store_true", help="never send audio to Google; local speech only")
+    p.add_argument("--wearer", default=os.environ.get("HAZEL_WEARER"), help="name of the person wearing the glasses")
+    p.add_argument("--no-cloud-speech", action="store_true", help="local speech only (this is the default)")
+    p.add_argument("--cloud-text", action="store_true", help="opt in: send transcript text to Gemini for summaries")
     args = p.parse_args(argv)
+    args.no_cloud_speech = not args.cloud_text
     if args.no_cloud_speech:
         os.environ["NOTES_STT_BACKEND"] = "mlx"
     if args.room_consent is not None and not args.room_consent.strip():
@@ -456,11 +398,13 @@ def main(argv=None):
                       else IngestSource(store, room=room))
         except RuntimeError as exc:
             sys.exit(str(exc))
-    app = create_app(store, source, data_dir, ingest=mode == "ingest", room=room, warm_notes=True)
-    ip = lan_ip()
-    print(f"face-context ({mode}) viewer: http://{ip}:{args.port}/  (local http://127.0.0.1:{args.port}/)", flush=True)
+    app = create_app(store, source, data_dir, ingest=mode == "ingest", room=room, warm_notes=True,
+                     wearer=(args.wearer or "").strip()[:80] or None)
+    ip, host = lan_ip(), args.host or ("0.0.0.0" if args.lan else "127.0.0.1")
+    print(f"face-context ({mode}) viewer: http://127.0.0.1:{args.port}/  listening on {host}"
+          + (f", LAN http://{ip}:{args.port}/" if args.lan else " only (add --lan for phone and relay access)"), flush=True)
     print(speech_banner(args.no_cloud_speech), flush=True)
-    if mode == "ingest":
+    if mode == "ingest" and args.lan:
         print(f"ingest frames: ws://{ip}:{args.port}/ingest   audio: http://{ip}:{args.port}/api/ingest/audio", flush=True)
     if room:
         kept = "kept in " + args.db if args.keep and mode != "demo" else "ephemeral, deleted on exit"
@@ -470,7 +414,7 @@ def main(argv=None):
               "Turn it off with --no-auto-enrol.", flush=True)
     import uvicorn
     try:
-        uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+        uvicorn.run(app, host=host, port=args.port, log_level="warning")
     finally:
         if temp_dir:
             shutil.rmtree(temp_dir, ignore_errors=True)

@@ -10,6 +10,7 @@
 		A10000000000000000000011 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000021 /* MWDATCore */; };
 		A10000000000000000000012 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000022 /* MWDATCamera */; };
 		A10000000000000000000013 /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000023 /* MWDATMockDevice */; };
+		A10000000000000000000014 /* MWDATDisplay in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000024 /* MWDATDisplay */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -33,6 +34,7 @@
 				A10000000000000000000011 /* MWDATCore in Frameworks */,
 				A10000000000000000000012 /* MWDATCamera in Frameworks */,
 				A10000000000000000000013 /* MWDATMockDevice in Frameworks */,
+				A10000000000000000000014 /* MWDATDisplay in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -87,6 +89,7 @@
 				A10000000000000000000021 /* MWDATCore */,
 				A10000000000000000000022 /* MWDATCamera */,
 				A10000000000000000000023 /* MWDATMockDevice */,
+				A10000000000000000000024 /* MWDATDisplay */,
 			);
 			productName = GlassesRelay;
 			productReference = A10000000000000000000001 /* GlassesRelay.app */;
@@ -289,6 +292,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000081 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
 			productName = MWDATMockDevice;
+		};
+		A10000000000000000000024 /* MWDATDisplay */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000081 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATDisplay;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

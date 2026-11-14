@@ -1,0 +1,55 @@
+import Foundation
+
+struct LensPerson: Equatable {
+    let id: Int
+    let name: String
+    let role: String
+    let summary: String
+    let followup: String
+    let photo: Data?
+}
+
+enum LensCard: Equatable {
+    case idle
+    case newFace
+    case person(LensPerson)
+
+    static let side = 600
+    static let photoSide = 160
+    static let summaryLimit = 120
+    static let followupLimit = 70
+    static let idleText = "Watching"
+    static let newFaceText = "New face"
+}
+
+struct PersonRecord: Decodable {
+    let id: Int
+    let name: String?
+    let role: String?
+    let summary: String?
+    let followups: [String]?
+    let thumbUrl: String?
+}
+
+enum LensFormat {
+    static func person(_ record: PersonRecord, photo: Data?) -> LensPerson {
+        LensPerson(
+            id: record.id,
+            name: clip(record.name ?? "", to: 40),
+            role: clip(record.role ?? "", to: 60),
+            summary: clip(record.summary ?? "", to: LensCard.summaryLimit),
+            followup: clip(record.followups?.first ?? "", to: LensCard.followupLimit),
+            photo: photo
+        )
+    }
+
+    static func clip(_ text: String, to limit: Int) -> String {
+        let flat = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        guard flat.count > limit else { return flat }
+        let head = flat.prefix(limit - 1)
+        if let space = head.lastIndex(of: " "), head.distance(from: head.startIndex, to: space) > limit / 2 {
+            return String(head[..<space]) + "…"
+        }
+        return String(head) + "…"
+    }
+}

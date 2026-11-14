@@ -21,6 +21,12 @@ function who(thumb) {
   return h("header", { class: "who" }, thumb);
 }
 
+function forgetLocal(id) {
+  try {
+    for (const k of Object.keys(localStorage)) if (new RegExp(`^fc\\.[a-z]+\\.${id}$`).test(k)) localStorage.removeItem(k);
+  } catch {}
+}
+
 export function renderPending(body, { snapshot, slow }) {
   const thumb = thumbFrame(snapshot
     ? h("img", { class: "p-thumb", src: snapshot, alt: "", width: 96, height: 96 })
@@ -226,6 +232,7 @@ export function renderPerson(body, p, ctx) {
       go.disabled = true;
       try {
         await api.remove(p.id);
+        forgetLocal(p.id);
         ctx.deleted();
       } catch (err) {
         go.disabled = false;

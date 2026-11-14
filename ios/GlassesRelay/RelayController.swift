@@ -25,10 +25,12 @@ final class RelayController {
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var watchTask: Task<Void, Never>?
     @ObservationIgnored private var run = 0
-    @ObservationIgnored private let toolkitReady: Bool
+    @ObservationIgnored let toolkitReady: Bool
+    @ObservationIgnored private let hub: GlassesSessionHub
 
-    init(toolkitReady: Bool) {
+    init(toolkitReady: Bool, hub: GlassesSessionHub) {
         self.toolkitReady = toolkitReady
+        self.hub = hub
         frames.onLink = { [weak self] link in
             Task { @MainActor in self?.link = link }
         }
@@ -107,7 +109,8 @@ final class RelayController {
         let chosen: any MediaSource
         switch source {
         case .glasses:
-            chosen = GlassesSource(frames: frames, audio: audio, useMock: useMockGlasses, report: report)
+            hub.useMock = useMockGlasses
+            chosen = GlassesSource(frames: frames, audio: audio, hub: hub, report: report)
         case .phone:
             chosen = PhoneCameraSource(frames: frames, audio: audio, report: report)
         case .pattern:

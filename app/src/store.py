@@ -49,6 +49,7 @@ class Store:
         self.lock = threading.RLock()
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.execute("PRAGMA foreign_keys = ON")
+        self.db.execute("PRAGMA secure_delete = ON")
         self.seen_interval = seen_interval
         self._seen_written = {}
         self._seen = {}
@@ -56,7 +57,7 @@ class Store:
         self.db.executescript(
             """
             CREATE TABLE IF NOT EXISTS people (
-                id INTEGER PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 consent_at REAL NOT NULL,
                 consent_note TEXT NOT NULL,
@@ -80,6 +81,24 @@ class Store:
         )
         self._migrate()
 
+    def _autoincrement(self):
+        sql = self.db.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'people'").fetchone()[0]
+        if "AUTOINCREMENT" in sql.upper():
+            return
+        new_sql = re.sub(r"id\s+INTEGER\s+PRIMARY\s+KEY", "id INTEGER PRIMARY KEY AUTOINCREMENT", sql, count=1,
+                         flags=re.I)
+        new_sql = re.sub(r"CREATE TABLE\s+(IF NOT EXISTS\s+)?\"?people\"?", "CREATE TABLE people_new", new_sql,
+                         count=1, flags=re.I)
+        cols = ", ".join(r[1] for r in self.db.execute("PRAGMA table_info(people)"))
+        self.db.execute("PRAGMA foreign_keys = OFF")
+        try:
+            self.db.executescript(
+                f"BEGIN; {new_sql}; INSERT INTO people_new ({cols}) SELECT {cols} FROM people; "
+                "DROP TABLE people; ALTER TABLE people_new RENAME TO people; COMMIT;"
+            )
+        finally:
+            self.db.execute("PRAGMA foreign_keys = ON")
+
     def _migrate(self):
         with self.lock:
             have = {r[1] for r in self.db.execute("PRAGMA table_info(people)")}
@@ -88,6 +107,8 @@ class Store:
                     self.db.execute(f"ALTER TABLE people ADD COLUMN {col} {decl}")
             if "clear" not in {r[1] for r in self.db.execute("PRAGMA table_info(snapshots)")}:
                 self.db.execute("ALTER TABLE snapshots ADD COLUMN clear INTEGER NOT NULL DEFAULT 0")
+            self.db.commit()
+            self._autoincrement()
             self.db.commit()
 
     def enrol(self, name, embedding, consent_note, role="", thumb=None, auto=False, name_source="manual",
@@ -114,19 +135,18 @@ class Store:
             rows = self.db.execute("SELECT id, name, embedding FROM people").fetchall()
         return [(i, n, np.frombuffer(b, dtype=np.float32)) for i, n, b in rows]
 
-    def match(self, embedding, threshold=0.363):
+    def ranked(self, embedding):
         vec = np.asarray(embedding, dtype=np.float32).ravel()
-        best = None
+        out = []
         for pid, name, known in self.people():
-            if known.shape != vec.shape:
-                continue
-            denom = np.linalg.norm(vec) * np.linalg.norm(known)
-            if denom == 0:
-                continue
-            score = float(np.dot(vec, known) / denom)
-            if score >= threshold and (best is None or score > best[2]):
-                best = (pid, name, score)
-        return best
+            denom = np.linalg.norm(vec) * np.linalg.norm(known) if known.shape == vec.shape else 0
+            if denom:
+                out.append((pid, name, float(np.dot(vec, known) / denom)))
+        return sorted(out, key=lambda r: -r[2])
+
+    def match(self, embedding, threshold=0.363):
+        ranked = self.ranked(embedding)
+        return ranked[0] if ranked and ranked[0][2] >= threshold else None
 
     def exists(self, person_id):
         with self.lock:

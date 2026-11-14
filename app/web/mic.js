@@ -1,6 +1,8 @@
 const PRE_ROLL = 0.3;
 const HANG = 0.5;
-const MAX_SEG = 2.5;
+const MAX_SEG = 6;
+const MAX_LAG = 0.4;
+const SERVER_MIN_LIP = 0.25;
 const MIN_LOUD = 0.3;
 const PRESENT_SHARE = 0.5;
 const MIN_LIP_SHARE = 0.3;
@@ -17,6 +19,16 @@ function smooth(xs) {
     const w = xs.slice(Math.max(0, i - 1), i + 2);
     return w.reduce((a, b) => a + b, 0) / w.length;
   });
+}
+
+function laggedCorr(xs, ys, step) {
+  const maxK = Math.max(0, Math.round(MAX_LAG / Math.max(step, 0.001)));
+  let best = -1;
+  for (let k = 0; k <= maxK; k++) {
+    if (xs.length - k < MIN_PAIRS) break;
+    best = Math.max(best, pearson(xs.slice(0, xs.length - k), ys.slice(k)));
+  }
+  return best < -0.99 ? 0 : best;
 }
 
 function pearson(xs, ys) {
@@ -39,7 +51,7 @@ function scoreFor(ticks, loud, trackId) {
   if (lm.length < loud.length / 2) return { trackId, ok: false, lip: 0, std: 0 };
   const share = lm.filter((x) => x.moving).length / lm.length;
   const pairs = ticks.filter((t) => t.lips && t.lips[trackId] && t.lips[trackId].a != null);
-  const corr = pairs.length >= MIN_PAIRS ? pearson(smooth(pairs.map((t) => t.rms)), smooth(pairs.map((t) => t.lips[trackId].a))) : 0;
+  const corr = pairs.length >= MIN_PAIRS ? laggedCorr(smooth(pairs.map((t) => t.rms)), smooth(pairs.map((t) => t.lips[trackId].a)), pairs[0].dt) : 0;
   const as = lm.map((x) => x.a);
   const mean = as.reduce((a, b) => a + b, 0) / as.length;
   const std = Math.sqrt(as.reduce((a, b) => a + (b - mean) ** 2, 0) / as.length);
@@ -71,6 +83,7 @@ export function judge(ticks, cands) {
     if (!win) return { upload: false, reason: "ambiguous speaker", loud: true };
   }
   if (win.personId == null) return { upload: false, reason: "speaker not enrolled", loud: true };
+  if (win.lip < SERVER_MIN_LIP) return { upload: false, reason: "lip score too low", loud: true, still: true, lip: win.lip };
   return { upload: true, reason: cands.length === 1 ? "speech" : `active speaker of ${cands.length}`, loud: true, lip: win.lip, personId: win.personId };
 }
 
@@ -251,8 +264,26 @@ export function startMic(dot, { lips = null } = {}) {
 
   const send = (blob, personId, lip) => {
     fetch(`/api/ingest/audio?personId=${encodeURIComponent(personId)}&lip=${lip.toFixed(2)}`, { method: "POST", headers: { "Content-Type": "audio/wav" }, body: blob })
-      .then((res) => { idle = res.ok ? { state: "on", label: "Microphone listening" } : { state: "warn", label: "Microphone on, server did not accept audio" }; })
-      .catch(() => { idle = { state: "warn", label: "Microphone on, server unreachable" }; });
+      .then(async (res) => {
+        let body = null;
+        try { body = await res.json(); } catch { body = null; }
+        if (res.ok && !(body && body.queued === false)) {
+          stats.queued = (stats.queued || 0) + 1;
+          idle = { state: "on", label: "Microphone listening" };
+          return;
+        }
+        const why = body && (body.reason || body.detail) ? String(body.reason || body.detail) : `status ${res.status}`;
+        stats.rejected = (stats.rejected || 0) + 1;
+        stats.lastRejection = why;
+        console.debug(`[mic] server did not queue: ${why}`);
+        idle = { state: "warn", label: `Speech not used: ${why}` };
+        flash = performance.now() + 2500;
+        set("warn", idle.label);
+      })
+      .catch(() => {
+        idle = { state: "warn", label: "Microphone on, server unreachable" };
+        set("warn", idle.label);
+      });
   };
 
   const onSegment = (seg) => {
